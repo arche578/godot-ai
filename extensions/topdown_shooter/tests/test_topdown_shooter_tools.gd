@@ -19,6 +19,8 @@ const PlaytestTools := preload("res://addons/topdown_shooter_tools/handlers/play
 const HideoutTools := preload("res://addons/topdown_shooter_tools/handlers/hideout_tools.gd")
 const NotesTools := preload("res://addons/topdown_shooter_tools/handlers/notes_tools.gd")
 const FeedbackTools := preload("res://addons/topdown_shooter_tools/handlers/feedback_tools.gd")
+const AssetTools := preload("res://addons/topdown_shooter_tools/handlers/asset_tools.gd")
+const SwapTools := preload("res://addons/topdown_shooter_tools/handlers/swap_tools.gd")
 const ToolSpecs := preload("res://addons/topdown_shooter_tools/tool_specs.gd")
 
 const WORK_DIR := "res://zz_mcp_test_topdown"
@@ -34,6 +36,8 @@ var _hideout: HideoutTools
 var _main_scene_before := ""
 var _notes: NotesTools
 var _feedback: FeedbackTools
+var _assets: AssetTools
+var _swap: SwapTools
 var _undo_redo: EditorUndoRedoManager
 var _added: Array[Node] = []
 
@@ -54,6 +58,8 @@ func suite_setup(ctx: Dictionary) -> void:
 	_main_scene_before = str(ProjectSettings.get_setting("application/run/main_scene", ""))
 	_notes = NotesTools.new()
 	_feedback = FeedbackTools.new()
+	_assets = AssetTools.new()
+	_swap = SwapTools.new()
 	_notes.notes_dir = WORK_DIR + "/notes/"
 	if EditorInterface.get_edited_scene_root() == null:
 		skip_suite("needs an open scene")
@@ -70,6 +76,7 @@ func teardown() -> void:
 func suite_teardown() -> void:
 	teardown()
 	_remove_tree(ProjectSettings.globalize_path(WORK_DIR))
+	_remove_asset_test_files()
 	var changed := false
 	for suffix in Tools.INPUT_ACTIONS.keys() + ["inventory", "interact"]:
 		var action: String = ACTION_PREFIX + suffix
@@ -149,7 +156,7 @@ func _weapon_params(id: String, extra: Dictionary = {}) -> Dictionary:
 
 func test_specs_validate() -> void:
 	var specs := ToolSpecs.build()
-	assert_eq(specs.size(), 12)
+	assert_eq(specs.size(), 15)
 	var names := []
 	for spec in specs:
 		assert_eq(spec.validate(), [] as Array[String], "spec %s" % spec.name)
@@ -157,9 +164,9 @@ func test_specs_validate() -> void:
 		## The playtest runs while the game plays, so it must not be gated.
 		## playtest_notes is read while the game runs, so it is not gated either.
 		assert_eq(spec.requires_writable, not spec.name in ["raid_playtest", "playtest_notes"], "requires_writable of %s" % spec.name)
-		assert_eq(spec.deferred, spec.name == "raid_playtest", "deferred of %s" % spec.name)
+		assert_eq(spec.deferred, spec.name in ["raid_playtest", "asset_cleanup", "asset_import"], "deferred of %s" % spec.name)
 		names.append(spec.name)
-	assert_eq(names, ["topdown_camera_setup", "player_controller_scaffold", "weapon_create", "combat_feedback_setup", "enemy_ai_scaffold", "item_db_import", "loot_table_edit", "inventory_ui_scaffold", "raid_map_blockout", "raid_playtest", "playtest_notes", "hideout_scaffold"])
+	assert_eq(names, ["topdown_camera_setup", "player_controller_scaffold", "weapon_create", "combat_feedback_setup", "enemy_ai_scaffold", "item_db_import", "loot_table_edit", "inventory_ui_scaffold", "raid_map_blockout", "raid_playtest", "playtest_notes", "hideout_scaffold", "asset_cleanup", "asset_import", "swap_placeholder"])
 
 
 # --- player ------------------------------------------------------------------
@@ -2824,3 +2831,389 @@ func test_combat_feedback_reacts_to_shots_hits_kills_and_hurt() -> void:
 	weapon.try_fire(target.global_position + Vector3(3, 0, 0))
 	assert_eq(stats.shots, 3, "master switch off: nothing reacts")
 
+
+
+# --- asset pipeline ------------------------------------------------------------
+
+## A folder the editor already knows, so imports run synchronously in tests
+## (a brand-new folder needs the deferred tool's scan_sources wait).
+const ASSET_KNOWN_DIR := "res://tests"
+const ASSET_PREFIX := "zz_mcp_test_asset_"
+const MODEL_DIR := WORK_DIR + "/models"
+
+
+func _remove_asset_test_files() -> void:
+	var dir := DirAccess.open(ASSET_KNOWN_DIR)
+	if dir != null:
+		for file in dir.get_files():
+			if file.begins_with(ASSET_PREFIX):
+				DirAccess.remove_absolute(ProjectSettings.globalize_path(ASSET_KNOWN_DIR.path_join(file)))
+	var sources := ProjectSettings.globalize_path(AssetTools.SOURCES_ROOT)
+	var sdir := DirAccess.open(sources)
+	if sdir == null:
+		return
+	for sub in sdir.get_directories():
+		if sub.begins_with(ASSET_PREFIX):
+			_remove_tree(sources.path_join(sub))
+	if DirAccess.get_directories_at(sources).is_empty():
+		## .gdignore is hidden, so _remove_tree's listing skips it.
+		DirAccess.remove_absolute(sources.path_join(".gdignore"))
+		_remove_tree(sources)
+
+
+## A box model (optionally with a thin barrel and a Muzzle marker) as a
+## node tree; free it or pass it to _save_model / _export_glb.
+func _box_model(size: Vector3, center: Vector3, barrel: bool = false) -> Node3D:
+	var root := Node3D.new()
+	root.name = "TestModel"
+	var mesh := MeshInstance3D.new()
+	mesh.name = "Body"
+	var box := BoxMesh.new()
+	box.size = size
+	mesh.mesh = box
+	mesh.position = center
+	root.add_child(mesh)
+	if barrel:
+		var b := MeshInstance3D.new()
+		b.name = "Barrel"
+		var bm := BoxMesh.new()
+		bm.size = Vector3(0.04, 0.04, 0.4)
+		b.mesh = bm
+		b.position = center + Vector3(0, 0.03, size.z / 2.0 + 0.2)
+		root.add_child(b)
+		var grip := MeshInstance3D.new()
+		grip.name = "Grip"
+		var gm := BoxMesh.new()
+		gm.size = Vector3(0.06, 0.16, 0.08)
+		grip.mesh = gm
+		grip.position = center + Vector3(0, -size.y / 2.0 - 0.08, -size.z * 0.25)
+		root.add_child(grip)
+	Util_own(root)
+	return root
+
+
+static func Util_own(root: Node) -> void:
+	for child in root.get_children():
+		child.owner = root
+
+
+func _save_model(root: Node3D, path: String, muzzle_at: Variant = null) -> String:
+	if muzzle_at != null:
+		var m := Marker3D.new()
+		m.name = "Muzzle"
+		m.position = muzzle_at
+		root.add_child(m)
+		m.owner = root
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(path.get_base_dir()))
+	var packed := PackedScene.new()
+	packed.pack(root)
+	root.free()
+	assert_eq(ResourceSaver.save(packed, path), OK, "save model %s" % path)
+	return path
+
+
+func _export_glb(root: Node3D, abs_path: String) -> String:
+	DirAccess.make_dir_recursive_absolute(abs_path.get_base_dir())
+	var doc := GLTFDocument.new()
+	var state := GLTFState.new()
+	assert_eq(doc.append_from_scene(root, state), OK, "gltf append")
+	assert_eq(doc.write_to_filesystem(state, abs_path), OK, "gltf write")
+	root.free()
+	return abs_path
+
+
+func test_asset_params_rejected() -> void:
+	assert_is_error(_assets.asset_import({"kind": "prop", "asset_id": "crate"}), "INVALID_PARAMS")
+	assert_is_error(_assets.asset_import({"source": "/nope/x.glb", "kind": "gun", "asset_id": "crate"}), "INVALID_PARAMS")
+	assert_is_error(_assets.asset_import({"source": "/nope/x.glb", "kind": "prop", "asset_id": "Big Crate"}), "INVALID_PARAMS")
+	assert_is_error(_assets.asset_import({"source": "/nope/x.png", "kind": "prop", "asset_id": "crate"}), "INVALID_PARAMS")
+	assert_is_error(_assets.asset_import({"source": "/nope/x.glb", "kind": "prop", "asset_id": "crate"}), "INVALID_PARAMS")
+	assert_is_error(_assets.asset_import({"source": "/nope/x.glb", "kind": "prop", "asset_id": "crate", "dest_dir": "res://addons/x"}), "INVALID_PARAMS")
+	assert_is_error(_assets.asset_import({"source": "/nope/x.glb", "kind": "prop", "asset_id": "crate", "colour": 1}), "INVALID_PARAMS")
+	assert_is_error(_assets.asset_cleanup({"source": "/nope/x.glb", "kind": "weapon", "asset_id": "smg"}), "INVALID_PARAMS")
+	assert_is_error(_assets.asset_cleanup({"source": "/nope/x.glb", "kind": "weapon", "asset_id": "smg", "forward": "north"}), "INVALID_PARAMS")
+	assert_true(AssetTools.is_asset_id("gold_watch_2"))
+	assert_false(AssetTools.is_asset_id("_x"))
+	assert_eq(AssetTools.default_dest_dir("weapon", "smg"), "res://assets/weapons/smg")
+	assert_eq(AssetTools.resolve_source("~/Downloads/a.glb"), OS.get_environment("HOME").path_join("Downloads/a.glb"))
+
+
+func test_asset_import_copies_imports_and_reports() -> void:
+	var src := _export_glb(_box_model(Vector3(1.0, 0.6, 0.8), Vector3(0, 0.3, 0)), ProjectSettings.globalize_path(WORK_DIR + "/src/crate.glb"))
+	var id := ASSET_PREFIX + "crate"
+	var params := {"source": src, "kind": "prop", "asset_id": id, "dest_dir": ASSET_KNOWN_DIR, "preview": false, "generate_lods": false}
+	var dry := _assets.asset_import(params.merged({"dry_run": true}))
+	assert_has_key(dry, "data", str(dry))
+	assert_false(FileAccess.file_exists(ASSET_KNOWN_DIR + "/%s.glb" % id), "dry run writes nothing")
+
+	var result := _assets.asset_import(params)
+	assert_has_key(result, "data", str(result))
+	var data: Dictionary = result.data
+	var dest := ASSET_KNOWN_DIR + "/%s.glb" % id
+	assert_eq(data.path, dest)
+	assert_false(data.get("import_pending", false), "known folder imports at once")
+	assert_false(data.has("error"), str(data))
+	assert_true(FileAccess.file_exists(src), "source untouched")
+	assert_true(ResourceLoader.exists(dest), "imported")
+	var cfg := ConfigFile.new()
+	assert_eq(cfg.load(dest + ".import"), OK)
+	assert_eq(cfg.get_value("params", "meshes/generate_lods"), false, "our import settings")
+	assert_true(String(cfg.get_value("remap", "path", "")).begins_with("res://.godot/imported/"), "editor wrote the import result")
+	assert_eq(data.triangles, 12)
+	assert_true(absf(data.size[0] - 1.0) < 0.01 and absf(data.size[1] - 0.6) < 0.01 and absf(data.size[2] - 0.8) < 0.01, "size %s" % str(data.size))
+	assert_eq(data.warnings, [], "bottom-centered 1 m box is fine: %s" % str(data.warnings))
+	assert_true(FileAccess.file_exists(AssetTools.work_dir(id) + "/asset.json"), "history record")
+	assert_true(FileAccess.file_exists(AssetTools.SOURCES_ROOT + "/.gdignore"), "work files hidden from the editor")
+
+	assert_is_error(_assets.asset_import(params), "ALREADY_EXISTS")
+	assert_true(_global_ur().undo(), "undo runs")
+	assert_false(FileAccess.file_exists(dest), "undo removes the copy")
+
+
+func test_asset_inspect_warns_over_budget_and_bad_origin() -> void:
+	var path := _save_model(_box_model(Vector3(0.1, 0.12, 0.9), Vector3(0, 0, 0)), MODEL_DIR + "/sideways.tscn")
+	var info := AssetTools.inspect_model(path, "item")
+	assert_true(info.warnings.any(func(w): return String(w).contains("origin")), "centered item origin warned: %s" % str(info.warnings))
+	var gun := AssetTools.inspect_model(_save_model(_box_model(Vector3(0.9, 0.12, 0.1), Vector3(0, 0.06, 0)), MODEL_DIR + "/gun_x.tscn"), "weapon")
+	assert_true(gun.warnings.any(func(w): return String(w).contains("-Z")), "weapon along x warned: %s" % str(gun.warnings))
+	assert_true(gun.warnings.any(func(w): return String(w).contains("Muzzle")), "missing Muzzle warned")
+
+
+func test_fit_transforms() -> void:
+	var model := AABB(Vector3(-0.5, 0, -0.25), Vector3(1, 2, 0.5))
+	## height: 1.8 m tall, feet on the box bottom.
+	var h: Transform3D = SwapTools.fit_transforms(model, AABB(Vector3(-0.4, 0, -0.4), Vector3(0.8, 1.8, 0.8)), "height", 0, 0, false)[0]
+	assert_true(h.basis.get_scale().is_equal_approx(Vector3(0.9, 0.9, 0.9)), str(h.basis.get_scale()))
+	assert_true((h * model).position.y == 0.0)
+	## fit inside a 1 m cube: limited by height 2 -> 0.5.
+	var f: Transform3D = SwapTools.fit_transforms(model, AABB(Vector3(4.5, 0, -0.5), Vector3(1, 1, 1)), "fit", 0, 0, false)[0]
+	var fb := f * model
+	assert_true(fb.size.is_equal_approx(Vector3(0.5, 1, 0.25)), str(fb.size))
+	assert_true(fb.get_center().x == 5.0 and fb.position.y == 0.0)
+	## stretch a model long in x into a box long in z: turned 90 degrees.
+	var st: Transform3D = SwapTools.fit_transforms(model, AABB(Vector3(-0.1, 0, -2), Vector3(0.2, 3, 4)), "stretch", 0, 0, false)[0]
+	assert_true((st * model).size.is_equal_approx(Vector3(0.2, 3, 4)), str((st * model).size))
+	## tile a 1 m module along a 4 m wall: 4 copies covering it.
+	var tiles: Array = SwapTools.fit_transforms(model, AABB(Vector3(0, 0, 0), Vector3(4, 3, 0.3)), "tile", 0, 0, false)
+	assert_eq(tiles.size(), 4)
+	var merged: AABB = tiles[0] * model
+	for t in tiles:
+		merged = merged.merge(t * model)
+	assert_true(merged.size.is_equal_approx(Vector3(4, 3, 0.3)), str(merged.size))
+	## none + origin: model origin at the host origin.
+	var n: Transform3D = SwapTools.fit_transforms(model, AABB(Vector3(0, 0, -0.6), Vector3(0.1, 0.1, 0.6)), "none", 0, 0, true)[0]
+	assert_eq(n.origin, Vector3.ZERO)
+
+
+func _test_map() -> Node3D:
+	var map := Node3D.new()
+	map.name = "SwapTestMap"
+	map.set_meta(&"raid_map_seed", 1)
+	_root().add_child(map)
+	_added.append(map)
+	map.owner = _root()
+	for spec in [["Crates", "Crate1", "Body", Vector3(1.0, 0.7, 0.8), Vector3(3, 0, 0)], ["Walls", "Wall1", "Mesh", Vector3(0.3, 3, 6), Vector3(0, 1.5, 0)]]:
+		var group := Node3D.new()
+		group.name = spec[0]
+		map.add_child(group)
+		group.owner = _root()
+		var body := StaticBody3D.new()
+		body.name = spec[1]
+		body.position = spec[4]
+		group.add_child(body)
+		body.owner = _root()
+		var mi := MeshInstance3D.new()
+		mi.name = spec[2]
+		var box := BoxMesh.new()
+		box.size = spec[3]
+		mi.mesh = box
+		if spec[2] == "Body":
+			mi.position.y = spec[3].y / 2.0
+		body.add_child(mi)
+		mi.owner = _root()
+		var cs := CollisionShape3D.new()
+		cs.name = "Shape"
+		var shape := BoxShape3D.new()
+		shape.size = spec[3]
+		cs.shape = shape
+		body.add_child(cs)
+		cs.owner = _root()
+	return map
+
+
+func test_swap_map_crates_and_walls_with_undo_and_revert() -> void:
+	var map := _test_map()
+	var model := _save_model(_box_model(Vector3(2, 1, 1), Vector3(0, 0.5, 0)), MODEL_DIR + "/crate_model.tscn")
+	var crate := map.get_node("Crates/Crate1")
+	var dry := _swap.swap_placeholder({"target": "map", "group": "Crates", "model": model, "dry_run": true})
+	assert_has_key(dry, "data", str(dry))
+	assert_eq(crate.get_node_or_null("BodySkin"), null, "dry run changes nothing")
+
+	var result := _swap.swap_placeholder({"target": "map", "group": "Crates", "model": model})
+	assert_has_key(result, "data", str(result))
+	assert_eq(result.data.swapped, 1)
+	var skin := crate.get_node_or_null("BodySkin") as Node3D
+	assert_true(skin != null, "skin added")
+	assert_eq(skin.owner, _root(), "skin saved with the scene")
+	assert_false((crate.get_node("Body") as Node3D).visible, "placeholder hidden")
+	assert_true(crate.get_node("Shape") is CollisionShape3D, "collision kept")
+	var fitted: AABB = AssetTools.measure(skin).aabb
+	assert_true(fitted.size.x <= 1.001 and fitted.size.y <= 0.701 and fitted.size.z <= 0.801, "fits the crate box: %s" % str(fitted.size))
+	assert_true(absf(fitted.position.y) < 0.001, "sits on the floor")
+
+	## Rerun replaces the skin instead of stacking.
+	assert_has_key(_swap.swap_placeholder({"target": "map", "group": "Crates", "model": model}), "data")
+	assert_eq(crate.get_children().filter(func(n): return String(n.name).begins_with("BodySkin")).size(), 1, "one skin")
+
+	var walls := _swap.swap_placeholder({"target": "map", "group": "Walls", "model": model})
+	assert_has_key(walls, "data", str(walls))
+	var wall := map.get_node("Walls/Wall1")
+	var wall_skin := wall.get_node("MeshSkin") as Node3D
+	assert_eq(wall_skin.get_child_count(), 3, "6 m wall tiled with 2 m modules")
+	var wb: AABB = AssetTools.measure(wall_skin).aabb
+	assert_true(wb.size.is_equal_approx(Vector3(0.3, 3, 6)), "tiles cover the wall: %s" % str(wb.size))
+
+	assert_true(_scene_ur().undo(), "undo runs")
+	assert_eq(wall.get_node_or_null("MeshSkin"), null, "undo removes the wall skin")
+	assert_true((wall.get_node("Mesh") as Node3D).visible, "undo shows the wall again")
+	assert_true(_scene_ur().redo(), "redo runs")
+	assert_true(wall.get_node_or_null("MeshSkin") != null, "redo")
+
+	var reverted := _swap.swap_placeholder({"target": "map", "group": "Crates", "revert": true})
+	assert_has_key(reverted, "data", str(reverted))
+	assert_eq(crate.get_node_or_null("BodySkin"), null, "revert removes the skin")
+	assert_true((crate.get_node("Body") as Node3D).visible, "revert shows the placeholder")
+	assert_is_error(_swap.swap_placeholder({"target": "map", "group": "Crates", "revert": true}), "NODE_NOT_FOUND")
+	assert_is_error(_swap.swap_placeholder({"target": "map", "group": "Nope", "model": model}), "NODE_NOT_FOUND")
+	assert_is_error(_swap.swap_placeholder({"target": "map", "model": model}), "INVALID_PARAMS")
+	assert_is_error(_swap.swap_placeholder({"target": "map", "group": "Crates", "model": "res://nope.glb"}), "INVALID_PARAMS")
+
+
+func test_swap_weapon_scene_file_moves_muzzle() -> void:
+	var made := _tools.weapon_create(_weapon_params("swap_gun"))
+	assert_has_key(made, "data", str(made))
+	var scene_path: String = made.data.scene_path
+	var model := _save_model(_box_model(Vector3(0.08, 0.14, 0.7), Vector3(0, 0, -0.25)), MODEL_DIR + "/gun_model.tscn", Vector3(0, 0.03, -0.62))
+	var result := _swap.swap_placeholder({"target": "weapon", "scene": scene_path, "model": model})
+	assert_has_key(result, "data", str(result))
+	assert_eq(result.data.edited, "scene file (saved)")
+	var weapon := (ResourceLoader.load(scene_path, "", ResourceLoader.CACHE_MODE_IGNORE) as PackedScene).instantiate()
+	assert_false((weapon.get_node("Model") as Node3D).visible, "box hidden")
+	var skin := weapon.get_node_or_null("ModelSkin/Model") as Node3D
+	assert_true(skin != null, "model instanced")
+	assert_eq(skin.scene_file_path, model, "saved as an instance of the model")
+	assert_true((weapon.get_node("Muzzle") as Node3D).position.is_equal_approx(Vector3(0, 0.03, -0.62)), "muzzle moved to the model's Muzzle")
+	assert_true(weapon.get("data") != null, "script and data kept")
+	weapon.free()
+
+	assert_true(_global_ur().undo(), "undo runs")
+	var restored := (ResourceLoader.load(scene_path, "", ResourceLoader.CACHE_MODE_IGNORE) as PackedScene).instantiate()
+	assert_eq(restored.get_node_or_null("ModelSkin"), null, "undo restores the scene file")
+	assert_true((restored.get_node("Model") as Node3D).visible)
+	restored.free()
+
+
+func test_swap_player_body_turns_with_aim() -> void:
+	var made := _tools.player_scaffold(_player_params({"add_to_scene": false}))
+	assert_has_key(made, "data", str(made))
+	var model := _save_model(_box_model(Vector3(0.6, 2.0, 0.4), Vector3(0, 1.0, 0)), MODEL_DIR + "/hero.tscn")
+	var result := _swap.swap_placeholder({"target": "player", "scene": made.data.scene_path, "model": model})
+	assert_has_key(result, "data", str(result))
+	var player := (ResourceLoader.load(made.data.scene_path, "", ResourceLoader.CACHE_MODE_IGNORE) as PackedScene).instantiate()
+	var skin := player.get_node_or_null("Aim/BodySkin") as Node3D
+	assert_true(skin != null, "skin under Aim")
+	assert_false((player.get_node("Body") as Node3D).visible)
+	assert_false((player.get_node("Aim/Nose") as Node3D).visible)
+	var box: AABB = AssetTools.measure(skin).aabb
+	assert_true(absf(box.size.y - 1.8) < 0.001 and absf(box.position.y) < 0.001, "1.8 m tall on the floor: %s" % str(box))
+	assert_true(player.get_node("CollisionShape3D") is CollisionShape3D)
+	player.free()
+
+
+func test_swap_item_patches_old_scripts_and_pickup_shows_model() -> void:
+	_fresh_loot()
+	## Older project copies: no model property, no _apply_model.
+	var item_script := WORK_DIR + "/scripts/item_data.gd"
+	var old_item := FileAccess.get_file_as_string(item_script).replace(
+		"## 3D model shown when the item lies on the ground (asset_import /\n## swap_placeholder fill this in). Empty: a box in the rarity color.\n@export_file(\"*.glb\", \"*.gltf\", \"*.fbx\", \"*.obj\", \"*.tscn\", \"*.scn\") var model := \"\"\n", "")
+	assert_false(old_item.contains("var model"), "simulated old item_data.gd")
+	_write(item_script, old_item)
+	var pickup_path := _install_template("loot_pickup")
+	var tmpl := FileAccess.get_file_as_string("res://addons/topdown_shooter_tools/templates/loot_pickup.gd.tmpl")
+	var old_pickup := tmpl.substr(0, tmpl.find(SwapTools.PICKUP_MODEL_MARKER)).replace("\t\t_apply_model()\n", "").rstrip("\n") + "\n"
+	_write(pickup_path, old_pickup)
+	var model := _save_model(_box_model(Vector3(0.05, 0.02, 0.05), Vector3(0, 0.01, 0)), MODEL_DIR + "/watch.tscn")
+
+	var params := {"target": "item", "item_id": "gold_watch", "model": model, "database_path": ITEM_DIR + "/item_database.tres", "script_dir": WORK_DIR + "/scripts"}
+	var result := _swap.swap_placeholder(params)
+	assert_has_key(result, "data", str(result))
+	assert_eq(result.data.files.size(), 3, str(result.data.files))
+	assert_true(FileAccess.get_file_as_string(item_script).contains("var model"), "item_data.gd gained model")
+	assert_true(FileAccess.get_file_as_string(pickup_path).contains("func _apply_model("), "loot_pickup.gd shows models")
+	var item := _load_fresh(ITEM_DIR + "/gold_watch.tres")
+	assert_eq(item.get("model"), model)
+
+	## The patched pickup shows the model scaled to model_size with a glow.
+	var holder := Node3D.new()
+	_root().add_child(holder)
+	_added.append(holder)
+	var pickup := Area3D.new()
+	pickup.set_script(_tool_copy(pickup_path))
+	pickup.set("item", item)
+	pickup.set("item_id", "gold_watch")
+	holder.add_child(pickup)
+	var shown := pickup.get_node_or_null("Visual/Model") as Node3D
+	assert_true(shown != null, "model under Visual")
+	var box: AABB = AssetTools.measure(shown).aabb
+	assert_true(absf(maxf(box.size.x, maxf(box.size.y, box.size.z)) * shown.scale.x - 0.45) < 0.01, "scaled to model_size")
+	assert_true(pickup.get_node_or_null("Glow") != null, "rarity glow")
+	assert_false(pickup.get_node("Visual").get_children().any(func(n): return n is MeshInstance3D and n.visible), "box hidden")
+
+	assert_true(_global_ur().undo(), "undo runs")
+	assert_eq(FileAccess.get_file_as_string(item_script), old_item, "undo restores item_data.gd")
+	assert_eq(FileAccess.get_file_as_string(pickup_path), old_pickup, "undo restores loot_pickup.gd")
+	assert_eq(_load_fresh(ITEM_DIR + "/gold_watch.tres").get("model"), null, "undo restores the item")
+	assert_is_error(_swap.swap_placeholder(params.merged({"item_id": "nope"}, true)), "NODE_NOT_FOUND")
+
+
+func test_tres_value_edit() -> void:
+	var text := "[gd_resource type=\"Resource\" format=3]\n\n[ext_resource type=\"Script\" path=\"res://a.gd\" id=\"1\"]\n\n[resource]\nscript = ExtResource(\"1\")\nitem_id = \"x\"\n"
+	var set1 := SwapTools._set_tres_value(text, "model", "res://m.glb")
+	assert_true(set1.contains("script = ExtResource(\"1\")\nmodel = \"res://m.glb\"\n"), set1)
+	var set2 := SwapTools._set_tres_value(set1, "model", "res://n.glb")
+	assert_eq(set2.count("model = "), 1)
+	assert_eq(SwapTools._set_tres_value(set2, "model", ""), text)
+	assert_eq(SwapTools._ext_script_path(text), "res://a.gd")
+
+
+func _write(path: String, text: String) -> void:
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	f.store_string(text)
+	f.close()
+
+
+## Runs the real Blender script when Blender is available (BLENDER_PATH or a
+## standard install); skipped otherwise.
+func test_asset_cleanup_runs_blender() -> void:
+	if AssetTools.find_blender("").is_empty():
+		skip("Blender not installed")
+		return
+	var model := _box_model(Vector3(0.12, 0.15, 0.4), Vector3(0, 0, -0.1), true)
+	var src := _export_glb(model, ProjectSettings.globalize_path(WORK_DIR + "/src/gun.glb"))
+	var id := ASSET_PREFIX + "gun"
+	var result := _assets.asset_cleanup({"source": src, "kind": "weapon", "asset_id": id, "import": false, "preview": false})
+	assert_has_key(result, "data", str(result))
+	var cleanup: Dictionary = result.data.cleanup
+	assert_true(String(cleanup.get("forward_detected", "")).contains("+z"), "barrel end found: %s" % str(cleanup.get("forward_detected")))
+	assert_true(absf(cleanup.result.size[2] - 0.7) < 0.01, "length 0.7 m: %s" % str(cleanup.result.size))
+	assert_true(cleanup.muzzle.position[2] < -0.3, "muzzle in front (-Z): %s" % str(cleanup.muzzle.position))
+	assert_true(FileAccess.file_exists(AssetTools.clean_output_path(id)), "cleaned glb written")
+	assert_true(FileAccess.file_exists(src), "source kept")
+
+
+func _global_ur() -> UndoRedo:
+	return _undo_redo.get_history_undo_redo(EditorUndoRedoManager.GLOBAL_HISTORY)
+
+
+func _scene_ur() -> UndoRedo:
+	return _undo_redo.get_history_undo_redo(_undo_redo.get_object_history_id(_root()))

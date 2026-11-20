@@ -41,6 +41,7 @@ func _ready() -> void:
 	monitorable = false
 	if get_child_count() == 0:
 		_build()
+		_apply_model()
 	_visual = get_node_or_null(^"Visual") as Node3D
 	body_entered.connect(_on_body_entered)
 
@@ -112,3 +113,83 @@ func _build() -> void:
 	label.outline_size = 6
 	label.position.y = hover_height + 0.45
 	add_child(label)
+
+
+# --- item model (asset pipeline) ---------------------------------------------
+
+## Largest side in meters of the item's 3D model (item.model) on the ground.
+@export var model_size := 0.45
+
+
+## Shows item.model instead of the colored box, with a glow in the rarity
+## color under it. Does nothing when the item has no model.
+func _apply_model() -> void:
+	var visual := get_node_or_null(^"Visual") as Node3D
+	var path := ""
+	if item != null and item.get("model") is String:
+		path = String(item.get("model"))
+	if visual == null or path.is_empty() or not ResourceLoader.exists(path):
+		return
+	var packed := load(path) as PackedScene
+	var model: Node3D = packed.instantiate() as Node3D if packed != null else null
+	if model == null:
+		return
+	var box := _model_bounds(model, model)
+	var longest := maxf(box.size.x, maxf(box.size.y, box.size.z))
+	if longest <= 0.0001:
+		model.free()
+		return
+	for child in visual.get_children():
+		if child is MeshInstance3D:
+			child.visible = false
+	var k := model_size / longest
+	model.scale = Vector3(k, k, k)
+	model.position = -box.get_center() * k
+	model.name = "Model"
+	visual.add_child(model)
+
+	var rarity := String(item.get("rarity")) if item.get("rarity") != null else "common"
+	var color: Color = RARITY_COLORS.get(rarity, RARITY_COLORS.common)
+	var glow := MeshInstance3D.new()
+	glow.name = "Glow"
+	var disc := CylinderMesh.new()
+	disc.top_radius = maxf(0.2, model_size * 0.7)
+	disc.bottom_radius = disc.top_radius
+	disc.height = 0.01
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.albedo_color = Color(color, 0.35)
+	disc.material = mat
+	glow.mesh = disc
+	glow.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	glow.position.y = 0.02
+	add_child(glow)
+	var light := OmniLight3D.new()
+	light.name = "GlowLight"
+	light.light_color = color
+	light.light_energy = 0.6
+	light.omni_range = 1.2
+	light.position.y = hover_height
+	add_child(light)
+
+
+static func _model_bounds(node: Node, root: Node) -> AABB:
+	var out := AABB()
+	var first := true
+	var stack: Array[Node] = [node]
+	while not stack.is_empty():
+		var n: Node = stack.pop_back()
+		if n is VisualInstance3D:
+			var xf := Transform3D.IDENTITY
+			var p := n
+			while p != null and p != root:
+				if p is Node3D:
+					xf = (p as Node3D).transform * xf
+				p = p.get_parent()
+			var b := xf * (n as VisualInstance3D).get_aabb()
+			out = b if first else out.merge(b)
+			first = false
+		for c in n.get_children():
+			stack.append(c)
+	return out

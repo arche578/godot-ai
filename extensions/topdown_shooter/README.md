@@ -12,11 +12,12 @@
    복사합니다. 결과: `<게임 프로젝트>/addons/topdown_shooter_tools/plugin.cfg`
 2. Godot에서 **프로젝트 > 프로젝트 설정 > 플러그인**을 열고 `Godot AI`와
    `Top-down Shooter Tools`를 둘 다 켭니다.
-3. Godot AI 독의 **Tools** 탭에 도구 12개가 보이면 끝입니다. Claude Code나 Claude
+3. Godot AI 독의 **Tools** 탭에 도구 15개가 보이면 끝입니다. Claude Code나 Claude
    데스크톱에는 `custom_topdown_camera_setup`, `custom_player_controller_scaffold`,
    `custom_weapon_create`, `custom_combat_feedback_setup`, `custom_enemy_ai_scaffold`, `custom_item_db_import`,
    `custom_loot_table_edit`, `custom_inventory_ui_scaffold`, `custom_raid_map_blockout`,
-   `custom_raid_playtest`, `custom_playtest_notes`, `custom_hideout_scaffold`라는
+   `custom_raid_playtest`, `custom_playtest_notes`, `custom_hideout_scaffold`,
+   `custom_asset_cleanup`, `custom_asset_import`, `custom_swap_placeholder`라는
    이름으로 바로 나타납니다(승격 도구). 도구 목록이
    갱신되지 않는 클라이언트라면 `custom_manage(op="invoke", name=...)`로도 부를
    수 있습니다.
@@ -37,6 +38,9 @@
 | `raid_playtest` | 게임을 실행해 봇이 레이드를 직접 플레이하고 보고. 실제 입력 액션으로 내비 메시를 따라 걷고, 마우스 이동으로 조준하고, 쏘고 재장전하고, 상자에서 interact를 눌러 열고, 떨어진 아이템을 줍고, 보이는 적과 싸우고, 시간 안에 탈출 지점으로 감. 결과(탈출/사망/시간 초과), 게임 중 오류, FPS, 전투·루팅 수치, 막힌 위치, 스크린샷과 문제 목록(`issues`), 판정(`verdict`)을 돌려줌. 처음 한 번 `RaidPlaytest` 자동 로드를 등록(평소 플레이에서는 아무것도 안 함, 실행 취소 한 번). `hideout_scaffold`가 있으면 은신처로 돌아가 창고·세이브를 확인하고 다시 출격까지 검사 |
 | `hideout_scaffold` | 레이드 루프를 닫음. 은신처 씬(큰 창고 격자 + 출격 가방, 둘 사이 드래그, 출격 버튼)을 만들고 `HideoutState` 자동 로드를 등록. 출격하면 가방이 레이드 플레이어의 인벤토리가 되고, 탈출하면 가방 전체(가져간 것 + 주운 것)가 창고로, 죽으면 가방을 잃은 채 은신처로 돌아옴. 창고·가방·전적은 `user://` JSON에 바로바로 저장. 레이드 중에 게임을 끄면 사망 처리. 레이드 씬은 건드리지 않음. `style="map"`이면 걸어 다니는 3D 은신처 방(창고 사물함에서 E로 창고 화면, 출격 문 앞에 서 있으면 출격)도 만들고, 레이드에서 그 방으로 돌아옴. 은신처를 메인 씬으로 지정. 실행 취소 한 번 |
 | `playtest_notes` | 플레이 중 메모. 게임에서 F8(또는 Ctrl/Cmd+N)을 누르면 일시정지하고 화면을 찍은 뒤, 마우스가 가리키는 바닥(Tab으로 플레이어 위치)에 핀을 꽂고 메모 창을 띄움. 메모·종류·씬·좌표·카메라·커서 아래 노드·최근 엔진 오류·시각과 스크린샷(표시한 곳에 빨간 원)을 `res://playtest_notes/`에 저장. Claude가 목록·내용·사진을 읽고 고친 뒤 `resolve`로 닫음. 열린 씬에 메모 핀 표시(보기 전용, 저장 안 됨). 닫기·다시 열기·삭제는 실행 취소 한 번. 처음 한 번 `PlaytestNotes` 자동 로드를 등록(디버그 빌드에서만 동작) |
+| `asset_cleanup` | 내려받거나 AI로 만든 모델(.glb/.gltf/.fbx/.obj/.blend)을 Blender로 창 없이 정리. 앞을 -Z로 돌리고(무기는 가는 총구 쪽을 찾아서), 미터 크기로 맞추고(캐릭터 키 1.8, 무기 길이 0.7, 아이템 0.3m), 원점을 바닥 중앙(무기는 손잡이)에 두고, 삼각형 예산까지 줄이고, 큰 텍스처를 줄이고, 무기에 `Muzzle` 지점을 넣어 .glb로 내보냄. 원본은 건드리지 않음. 이어서 `asset_import`까지 실행 |
+| `asset_import` | 모델을 규칙 폴더 `res://assets/<종류>s/<id>/<id>.glb`로 복사하고 임포트 설정(LOD, 탄젠트, 그림자 메시)을 써서 전체 scan 없이 임포트. 실제 크기(m)·원점·삼각형·머티리얼·텍스처 크기·뼈·애니메이션·Muzzle과 예산 초과·방향 경고를 보고하고, GUI 에디터면 미리보기 PNG. 실행 취소 한 번 |
+| `swap_placeholder` | 임시 도형을 모델로 교체. 임시 메시는 지우지 않고 숨기고, 모델은 옆의 `<이름>Skin` 노드에 넣어서 충돌·스크립트·노드 경로가 그대로. 플레이어·적(`Body`를 캡슐 키에 맞춤, 플레이어는 조준을 따라 돎), 무기(`Model` 교체, `Muzzle`을 모델 총구로), 레이드 맵(`Walls`·`Floors`는 길이 따라 타일, `Cover`·`Crates`는 상자에 맞춤), 아이템(바닥 아이템이 상자 대신 모델과 희귀도 빛). 다시 실행하면 교체, `revert=true`로 되돌림. 실행 취소 한 번 |
 
 Claude에게는 이렇게 말하면 됩니다.
 
@@ -60,6 +64,8 @@ Claude에게는 이렇게 말하면 됩니다.
 > 은신처 만들어 줘. 창고는 10x14, 새 게임은 붕대 5개랑 9mm 탄 60발 들고 시작.
 
 > 은신처를 걸어 다니는 3D 맵으로 만들어 줘. 방은 16x12, 출격 문은 2초.
+
+> ~/Downloads/rifle.glb를 smg 무기로 정리해서 넣고 smg 씬의 상자를 바꿔 줘. 레이드 맵 상자는 crate 모델로.
 
 > 플레이 메모 기능 켜 줘. (플레이하며 F8로 메모를 남긴 뒤) 내가 남긴 메모 보고 고쳐 줘.
 
@@ -415,4 +421,41 @@ extensions/topdown_shooter/script/link-test-project --remove
 
 `enabled`를 끄면 전부 꺼집니다. 다른 코드에서 `$CombatFeedback.add_trauma(0.5)`로 흔들거나
 `show_damage(위치, 양)`으로 숫자를 띄울 수 있습니다(폭발 등).
+
+## 에셋 파이프라인
+
+내려받은 파일(Poly Haven, Kenney 같은 무료 에셋)이나 Meshy·Tripo로 만든 모델을 게임에
+넣는 순서입니다. 게임 로직과 충돌체는 그대로 두고 **보이는 모양만** 바꿉니다.
+
+1. `asset_cleanup source=~/Downloads/x.glb kind=weapon asset_id=smg`: Blender가 창 없이
+   정리하고 `res://assets/weapons/smg/smg.glb`로 가져옵니다.
+2. `swap_placeholder target=weapon asset_id=smg`: `res://scenes/weapons/smg.tscn`의 상자를
+   모델로 바꾸고 `Muzzle`을 총구로 옮깁니다.
+
+| 종류(`kind`) | 크기 기본값 | 원점 | 삼각형 | 텍스처 | 바꿀 곳(`target`) |
+|---|---|---|---|---|---|
+| `weapon` | 길이 0.7m | 손잡이(추정) | 5k | 512 | `weapon` (무기 씬의 `Model`) |
+| `item` | 가장 긴 변 0.3m | 바닥 중앙 | 2k | 512 | `item` (`item_id`, 바닥 아이템) |
+| `prop` | 원래 크기 | 바닥 중앙 | 5k | 512 | `map` (`group=Walls/Cover/Crates/Floors`, `name_prefix`), `node` |
+| `character` | 키 1.8m | 발(바닥 중앙) | 15k | 1024 | `player`, `enemy` (`Body`) |
+
+- 폴더 규칙: 파일 이름을 게임 데이터의 id와 같게 둡니다. `item_id=gold_watch`면
+  `res://assets/items/gold_watch/gold_watch.glb`. 그래서 `swap_placeholder`에 `asset_id`(또는
+  `item_id`)만 줘도 모델을 찾습니다.
+- 작업 파일: Blender 작업 파일·보고서·미리보기·이력(`asset.json`)은 `res://asset_sources/<id>/`에
+  남고, 이 폴더는 `.gdignore`로 Godot이 무시합니다.
+- Blender 위치: `blender_path`, 에디터 설정 `filesystem/import/blender/blender_path`, 환경 변수
+  `BLENDER_PATH`, 표준 설치 위치(macOS `/Applications/Blender.app`) 순서로 찾습니다. Blender
+  3.6 이상.
+- 방향이 틀리면 `forward`(지금 모델 앞이 가리키는 축, 예: `+x`)나 `yaw_degrees`로 다시 정리합니다.
+  크기는 `size`·`size_mode`, 원점은 `origin`으로 바꿉니다.
+- 임포트: 에디터가 아는 폴더면 바로 임포트하고, 새 폴더면 증분 스캔(`scan_sources`, 창에 포커스가
+  올 때 에디터가 하는 것) 한 번으로 임포트를 기다립니다. 전체 `scan()`은 쓰지 않습니다.
+- 교체: 임시 메시는 숨겨 둡니다. 다시 실행하면 이전 `Skin`을 바꾸고, `revert=true`면 원래대로.
+  열린 씬이면 실행 취소 한 번, 열려 있지 않은 씬 파일이면 파일을 고치고 전역 실행 취소 한 번으로
+  되돌립니다. 그 씬을 인스턴스로 쓰는 열린 씬은 다시 열면 바뀐 모습이 보입니다.
+- 아이템: `item_data.gd`에 `model` 속성이 생겼습니다(아이템 시트에 `model` 열로도 채울 수 있음).
+  예전 사본의 `item_data.gd`·`loot_pickup.gd`는 `swap_placeholder target=item`이 짧게
+  고쳐 줍니다(손으로 많이 고친 파일은 그대로 두고 알려 줌). 바닥 아이템은 모델을
+  `loot_pickup.model_size`(기본 0.45m)에 맞춰 띄우고 밑에 희귀도 색 빛을 깝니다.
 
