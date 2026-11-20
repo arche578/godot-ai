@@ -484,8 +484,28 @@ def _shrink_textures(max_size, warnings):
                 entry["resized_to"] = [nw, nh]
             except RuntimeError as e:
                 warnings.append("could not resize texture %s: %s" % (img.name, e))
+        if img.file_format != "PNG":
+            _to_png(img, entry, warnings)
         out.append(entry)
     return out
+
+
+def _to_png(img, entry, warnings):
+    """Re-encodes a texture as PNG in the exported .glb.
+
+    Blender 5.3 writes sRGB JPEGs with a color profile Godot's glTF loader
+    rejects ("Couldn't load image ... image/jpeg"), which leaves the model
+    white. The exporter re-encodes from pixels when the image is no longer
+    backed by its original file, so pack the pixels as PNG first.
+    """
+    was = img.file_format
+    try:
+        img.file_format = "PNG"
+        img.filepath_raw = os.path.splitext(img.filepath_raw or img.name)[0] + ".png"
+        img.pack()
+        entry["format"] = "png (was %s)" % was.lower()
+    except RuntimeError as e:
+        warnings.append("could not convert texture %s from %s to PNG: %s" % (img.name, was, e))
 
 
 def _check_size(kind, size, warnings):

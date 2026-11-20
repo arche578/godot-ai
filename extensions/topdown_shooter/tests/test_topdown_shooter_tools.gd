@@ -2966,6 +2966,20 @@ func test_asset_import_copies_imports_and_reports() -> void:
 	assert_true(FileAccess.file_exists(AssetTools.SOURCES_ROOT + "/.gdignore"), "work files hidden from the editor")
 
 	assert_is_error(_assets.asset_import(params), "ALREADY_EXISTS")
+	var again := _assets.asset_import(params.merged({"overwrite": true}))
+	assert_has_key(again, "data", str(again))
+	assert_eq(again.data.get("triangles"), 12, "overwrite in a known, idle folder reimports at once: %s" % str(again.data))
+
+	var inspected := _assets.asset_import({"kind": "prop", "asset_id": id, "dest_dir": ASSET_KNOWN_DIR, "inspect_only": true, "preview": false})
+	assert_has_key(inspected, "data", str(inspected))
+	assert_eq(inspected.data.get("triangles"), 12, "inspect_only reports without copying")
+	assert_eq(inspected.data.path, dest)
+	var record: Variant = AssetTools.read_json(AssetTools.work_dir(id) + "/asset.json")
+	assert_true(record.history.any(func(e): return e.step == "report" and e.triangles == 12), "report summary kept in asset.json")
+	assert_is_error(_assets.asset_import({"kind": "prop", "asset_id": id + "_none", "dest_dir": ASSET_KNOWN_DIR, "inspect_only": true}), "INVALID_PARAMS")
+	assert_is_error(_assets.asset_import({"kind": "prop", "asset_id": id, "inspect_only": true, "overwrite": true}), "INVALID_PARAMS")
+
+	assert_true(_global_ur().undo(), "undo of the overwrite runs")
 	assert_true(_global_ur().undo(), "undo runs")
 	assert_false(FileAccess.file_exists(dest), "undo removes the copy")
 
@@ -2990,6 +3004,9 @@ func test_fit_transforms() -> void:
 	var fb := f * model
 	assert_true(fb.size.is_equal_approx(Vector3(0.5, 1, 0.25)), str(fb.size))
 	assert_true(fb.get_center().x == 5.0 and fb.position.y == 0.0)
+	## fill: footprint in proportion, height to the box.
+	var fl: Transform3D = SwapTools.fit_transforms(model, AABB(Vector3(4.5, 0, -0.5), Vector3(1, 1, 1)), "fill", 0, 0, false)[0]
+	assert_true((fl * model).size.is_equal_approx(Vector3(1, 1, 0.5)), str((fl * model).size))
 	## stretch a model long in x into a box long in z: turned 90 degrees.
 	var st: Transform3D = SwapTools.fit_transforms(model, AABB(Vector3(-0.1, 0, -2), Vector3(0.2, 3, 4)), "stretch", 0, 0, false)[0]
 	assert_true((st * model).size.is_equal_approx(Vector3(0.2, 3, 4)), str((st * model).size))
@@ -3087,6 +3104,23 @@ func test_swap_map_crates_and_walls_with_undo_and_revert() -> void:
 	assert_is_error(_swap.swap_placeholder({"target": "map", "group": "Nope", "model": model}), "NODE_NOT_FOUND")
 	assert_is_error(_swap.swap_placeholder({"target": "map", "model": model}), "INVALID_PARAMS")
 	assert_is_error(_swap.swap_placeholder({"target": "map", "group": "Crates", "model": "res://nope.glb"}), "INVALID_PARAMS")
+
+
+func test_swap_map_flat_model_warns_and_fill_matches_collision() -> void:
+	var map := _test_map()
+	var flat := _save_model(_box_model(Vector3(1.8, 0.3, 1.0), Vector3(0, 0.15, 0)), MODEL_DIR + "/flat_crate.tscn")
+	var fit := _swap.swap_placeholder({"target": "map", "group": "Crates", "model": flat})
+	assert_has_key(fit, "data", str(fit))
+	assert_true(fit.data.has("warnings") and String(fit.data.warnings[0]).contains("fill"), "low crate warned: %s" % str(fit.data.get("warnings")))
+	var box: Array = fit.data.swaps[0].box
+	assert_true(Vector3(box[0], box[1], box[2]).is_equal_approx(Vector3(1.0, 0.7, 0.8)), "box size reported: %s" % str(box))
+	var filled := _swap.swap_placeholder({"target": "map", "group": "Crates", "model": flat, "fit": "fill"})
+	assert_has_key(filled, "data", str(filled))
+	assert_false(filled.data.has("warnings"), str(filled.data.get("warnings")))
+	var skin := map.get_node("Crates/Crate1/BodySkin") as Node3D
+	var b: AABB = AssetTools.measure(skin).aabb
+	assert_true(absf(b.size.y - 0.7) < 0.001 and absf(b.position.y) < 0.001, "height matches the collision box: %s" % str(b))
+	assert_true(b.size.x <= 1.001 and b.size.z <= 0.801, "footprint inside the box: %s" % str(b.size))
 
 
 func test_swap_weapon_scene_file_moves_muzzle() -> void:
