@@ -8,12 +8,16 @@ extends EditorPlugin
 ## of depending on plugin load order.
 
 const ToolSpecs := preload("res://addons/topdown_shooter_tools/tool_specs.gd")
+const GenTools := preload("res://addons/topdown_shooter_tools/handlers/gen_tools.gd")
 
 var _registered_with: McpToolRegistry = null
 var _warned := false
 
 
 func _enter_tree() -> void:
+	## API keys and credit limits for asset_generate live in Editor
+	## Settings (outside the project and git).
+	GenTools.register_settings()
 	set_process(true)
 	_sync_registration()
 

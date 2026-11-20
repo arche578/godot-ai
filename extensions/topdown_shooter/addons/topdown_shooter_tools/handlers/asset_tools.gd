@@ -728,7 +728,7 @@ static func _warnings(kind: String, stats: Dictionary, has_muzzle: bool) -> Arra
 	var off := _bottom_center(stats.aabb)
 	var flat := maxf(0.01, maxf(size.x, size.z) * 0.1)
 	if kind != "weapon" and (Vector2(off.x, off.z).length() > flat or absf(off.y) > maxf(0.01, size.y * 0.1)):
-		out.append("the origin is not at the bottom center (bottom center is at %s); asset_cleanup origin=bottom_center fixes it" % _v3(off))
+		out.append("the origin is not at the bottom center (bottom center is at %s); asset_cleanup origin=bottom_center fixes it" % str(_v3(off)))
 	if kind == "weapon":
 		if size.x > size.z:
 			out.append("the weapon is wider (x) than long (z): it probably does not face -Z; run asset_cleanup (forward=auto)")
@@ -850,6 +850,15 @@ func render_preview(model_path: String, png_path: String, deadline_msec := 0) ->
 	var packed := load(model_path) as PackedScene
 	if packed == null:
 		return "skipped (model did not load)"
+	var model := packed.instantiate() as Node3D
+	if model == null:
+		return "skipped (the scene root is not a Node3D)"
+	return await render_node(model, png_path, stop)
+
+
+## Renders a Node3D tree (not in the scene tree; it is freed afterwards) into
+## a PNG. `stop` is a Time.get_ticks_msec() deadline. Coroutine.
+func render_node(model: Node3D, png_path: String, stop: int) -> Variant:
 	var tree := Engine.get_main_loop() as SceneTree
 	var vp := SubViewport.new()
 	vp.size = Vector2i(PREVIEW_SIZE, PREVIEW_SIZE)
@@ -857,7 +866,6 @@ func render_preview(model_path: String, png_path: String, deadline_msec := 0) ->
 	vp.transparent_bg = true
 	vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	EditorInterface.get_base_control().add_child(vp)
-	var model := packed.instantiate() as Node3D
 	vp.add_child(model)
 	var stats := measure(model)
 	var aabb: AABB = stats.aabb

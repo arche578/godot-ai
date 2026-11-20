@@ -22,6 +22,8 @@ const FeedbackTools := preload("res://addons/topdown_shooter_tools/handlers/feed
 const AssetTools := preload("res://addons/topdown_shooter_tools/handlers/asset_tools.gd")
 const SwapTools := preload("res://addons/topdown_shooter_tools/handlers/swap_tools.gd")
 const ToolSpecs := preload("res://addons/topdown_shooter_tools/tool_specs.gd")
+const GenTools := preload("res://addons/topdown_shooter_tools/handlers/gen_tools.gd")
+const GenProviders := preload("res://addons/topdown_shooter_tools/handlers/gen_providers.gd")
 
 const WORK_DIR := "res://zz_mcp_test_topdown"
 const ACTION_PREFIX := "mcp_test_td_"
@@ -77,6 +79,7 @@ func suite_teardown() -> void:
 	teardown()
 	_remove_tree(ProjectSettings.globalize_path(WORK_DIR))
 	_remove_asset_test_files()
+	_remove_gen_test_files()
 	var changed := false
 	for suffix in Tools.INPUT_ACTIONS.keys() + ["inventory", "interact"]:
 		var action: String = ACTION_PREFIX + suffix
@@ -156,7 +159,7 @@ func _weapon_params(id: String, extra: Dictionary = {}) -> Dictionary:
 
 func test_specs_validate() -> void:
 	var specs := ToolSpecs.build()
-	assert_eq(specs.size(), 15)
+	assert_eq(specs.size(), 18)
 	var names := []
 	for spec in specs:
 		assert_eq(spec.validate(), [] as Array[String], "spec %s" % spec.name)
@@ -164,9 +167,9 @@ func test_specs_validate() -> void:
 		## The playtest runs while the game plays, so it must not be gated.
 		## playtest_notes is read while the game runs, so it is not gated either.
 		assert_eq(spec.requires_writable, not spec.name in ["raid_playtest", "playtest_notes"], "requires_writable of %s" % spec.name)
-		assert_eq(spec.deferred, spec.name in ["raid_playtest", "asset_cleanup", "asset_import"], "deferred of %s" % spec.name)
+		assert_eq(spec.deferred, spec.name in ["raid_playtest", "asset_cleanup", "asset_import", "asset_generate", "asset_job", "asset_pipeline"], "deferred of %s" % spec.name)
 		names.append(spec.name)
-	assert_eq(names, ["topdown_camera_setup", "player_controller_scaffold", "weapon_create", "combat_feedback_setup", "enemy_ai_scaffold", "item_db_import", "loot_table_edit", "inventory_ui_scaffold", "raid_map_blockout", "raid_playtest", "playtest_notes", "hideout_scaffold", "asset_cleanup", "asset_import", "swap_placeholder"])
+	assert_eq(names, ["topdown_camera_setup", "player_controller_scaffold", "weapon_create", "combat_feedback_setup", "enemy_ai_scaffold", "item_db_import", "loot_table_edit", "inventory_ui_scaffold", "raid_map_blockout", "raid_playtest", "playtest_notes", "hideout_scaffold", "asset_cleanup", "asset_import", "swap_placeholder", "asset_generate", "asset_job", "asset_pipeline"])
 
 
 # --- player ------------------------------------------------------------------
@@ -3254,3 +3257,308 @@ func _global_ur() -> UndoRedo:
 
 func _scene_ur() -> UndoRedo:
 	return _undo_redo.get_history_undo_redo(_undo_redo.get_object_history_id(_root()))
+
+
+
+# --- AI generation (asset_generate / asset_job / asset_pipeline) ---------------
+
+const GEN_USAGE := "user://zz_mcp_test_gen_usage.json"
+
+
+## Answers like Meshy/Tripo at once, so the tools run synchronously.
+class FakeTransport extends RefCounted:
+	var requests: Array = []
+	var downloads: Array = []
+	## Task id -> status payload fields.
+	var tasks := {}
+	var next_id := 0
+	var glb := PackedByteArray()
+	var fail_create_code := 0
+
+	func request(req: Dictionary, _timeout: float = 30.0) -> Dictionary:
+		requests.append(req)
+		var url: String = req.url
+		if req.get("method") == "POST":
+			if fail_create_code != 0:
+				return {"code": fail_create_code, "json": {"message": "nope"}, "text": ""}
+			if url.ends_with("/files"):
+				return {"code": 200, "json": {"code": 0, "data": {"file_token": "file_tok"}}, "text": ""}
+			next_id += 1
+			var id := "task%d" % next_id
+			tasks[id] = "queued"
+			if url.contains("meshy"):
+				return {"code": 202, "json": {"result": id}, "text": ""}
+			return {"code": 200, "json": {"code": 0, "data": {"task_id": id}}, "text": ""}
+		if url.ends_with("/balance"):
+			return {"code": 200, "json": {"balance": 123} if url.contains("meshy") else {"code": 0, "data": {"balance": 45.0, "frozen": 0}}, "text": ""}
+		var id := url.get_file()
+		var st: String = tasks.get(id, "missing")
+		if url.contains("meshy"):
+			var meshy_st: String = {"queued": "PENDING", "succeeded": "SUCCEEDED", "failed": "FAILED"}.get(st, "IN_PROGRESS")
+			return {"code": 200, "json": {"id": id, "status": meshy_st, "progress": 100 if st == "succeeded" else 10,
+				"model_urls": {"glb": "https://cdn.example/%s.glb" % id} if st == "succeeded" else {},
+				"thumbnail_url": "https://cdn.example/%s.png" % id if st == "succeeded" else "",
+				"task_error": {"message": "bad mesh"} if st == "failed" else null, "consumed_credits": 20}, "text": ""}
+		var tripo_st: String = {"queued": "queued", "succeeded": "success", "failed": "failed"}.get(st, "running")
+		return {"code": 200, "json": {"code": 0, "data": {"task_id": id, "status": tripo_st, "progress": 100 if st == "succeeded" else 5,
+			"output": {"model_url": "https://cdn.example/%s.glb" % id, "rendered_image_url": "https://cdn.example/%s.png" % id} if st == "succeeded" else {}}}, "text": ""}
+
+	func download(url: String, abs_path: String, _timeout: float = 100.0) -> Dictionary:
+		downloads.append(url)
+		DirAccess.make_dir_recursive_absolute(abs_path.get_base_dir())
+		var f := FileAccess.open(abs_path, FileAccess.WRITE)
+		if url.ends_with(".glb"):
+			f.store_buffer(glb)
+		else:
+			var img := Image.create(8, 8, false, Image.FORMAT_RGBA8)
+			f.store_buffer(img.save_png_to_buffer())
+		f.close()
+		return {"ok": true, "bytes": glb.size()}
+
+	func finish_all(status := "succeeded") -> void:
+		for id in tasks:
+			tasks[id] = status
+
+
+func _gen(provider := "meshy") -> Array:
+	var gen := GenTools.new()
+	var fake := FakeTransport.new()
+	var model := _box_model(Vector3(0.3, 0.2, 0.3), Vector3(0, 0.1, 0))
+	var doc := GLTFDocument.new()
+	var state := GLTFState.new()
+	doc.append_from_scene(model, state)
+	fake.glb = doc.generate_buffer(state)
+	model.free()
+	gen.transport = fake
+	gen.usage_path_override = ProjectSettings.globalize_path(GEN_USAGE)
+	gen.today_override = "2099-01-01"
+	gen.settings_override = {"meshy_api_key": "msy_test", "tripo_api_key": "tsk_test", "default_provider": provider,
+		"candidates": 2, "daily_task_limit": 20, "meshy_base_url": "", "tripo_base_url": ""}
+	return [gen, fake]
+
+
+func _remove_gen_test_files() -> void:
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(GEN_USAGE))
+
+
+func _preset_existed() -> bool:
+	return FileAccess.file_exists(GenTools.PRESET_PATH)
+
+
+func _drop_preset(existed: bool) -> void:
+	if existed:
+		return
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(GenTools.PRESET_PATH))
+	var dir := ProjectSettings.globalize_path(GenTools.PRESET_PATH.get_base_dir())
+	if DirAccess.get_files_at(dir).is_empty() and DirAccess.get_directories_at(dir).is_empty():
+		DirAccess.remove_absolute(dir)
+
+
+func _template_preset() -> Dictionary:
+	return JSON.parse_string(FileAccess.get_file_as_string(GenTools.PRESET_TEMPLATE))
+
+
+func test_gen_compose_prompt() -> void:
+	var preset := _template_preset()
+	var c: Dictionary = GenTools.compose_prompt(preset, "weapon", "compact submachine gun", "meshy")
+	assert_true(String(c.prompt).begins_with("compact submachine gun, "), c.prompt)
+	assert_contains(String(c.prompt), "moss")
+	assert_contains(String(c.prompt), "original firearm")
+	assert_eq(c.negative_prompt, "", "Meshy takes no negative prompt")
+	assert_eq(c.target_polycount, 5000)
+	var t: Dictionary = GenTools.compose_prompt(preset, "item", "first aid kit", "tripo")
+	assert_true(String(t.negative_prompt).length() <= 255 and not String(t.negative_prompt).is_empty(), t.negative_prompt)
+	assert_eq(t.target_polycount, 2000)
+	var plain: Dictionary = GenTools.compose_prompt(preset, "item", "first aid kit", "tripo", false)
+	assert_eq(plain.prompt, "first aid kit")
+	assert_is_error(GenTools.compose_prompt(preset, "item", "x".repeat(900), "meshy"), "INVALID_PARAMS")
+	assert_is_error(GenTools.compose_prompt(preset, "item", "medkit with a brand name on it", "meshy"), "INVALID_PARAMS")
+
+
+func test_gen_estimate_credits() -> void:
+	var preset := _template_preset()
+	var m := GenTools.estimate_credits(preset, "meshy", "text", 2, true)
+	assert_eq(m.total, 50)
+	assert_eq(m.tasks, 3)
+	var i := GenTools.estimate_credits(preset, "tripo", "image", 2, true)
+	assert_eq(i.total, 60, "image candidates come textured, no texture task")
+	preset["credits"] = {"meshy": {"text_draft": 5}}
+	assert_eq(GenTools.estimate_credits(preset, "meshy", "text", 2, false).total, 10)
+
+
+func test_gen_provider_parsers() -> void:
+	var req := GenProviders.text_draft_request("meshy", "https://api.meshy.ai", "k", {"prompt": "p", "target_polycount": 2000, "kind": "character"})
+	assert_eq(req.url, "https://api.meshy.ai/openapi/v2/text-to-3d")
+	assert_eq(req.body.mode, "preview")
+	assert_eq(req.body.pose_mode, "a-pose")
+	assert_true("Authorization: Bearer k" in req.headers)
+	var tex := GenProviders.texture_request("tripo", "https://t/v3", "k", "abc", {"texture_prompt": "mossy"})
+	assert_eq(tex.url, "https://t/v3/models/texture")
+	assert_eq(tex.body.input, "abc")
+	assert_eq(tex.body.texture_prompt.text, "mossy")
+	assert_eq(GenProviders.parse_create("meshy", 202, {"result": "id1"}).task_id, "id1")
+	assert_eq(GenProviders.parse_create("tripo", 200, {"code": 0, "data": {"task_id": "t1"}}).task_id, "t1")
+	assert_contains(String(GenProviders.parse_create("meshy", 401, {"message": "bad"}).error), "API key")
+	assert_contains(String(GenProviders.parse_create("tripo", 403, {"code": 2010, "message": "x"}).error), "2010")
+	var st := GenProviders.parse_status("tripo", 200, {"code": 0, "data": {"status": "success", "progress": 100, "output": {"model_url": "u.glb", "rendered_image_url": "r.png"}}})
+	assert_eq(st.status, "succeeded")
+	assert_eq(st.model_url, "u.glb")
+	assert_eq(GenProviders.parse_status("meshy", 200, {"status": "FAILED", "task_error": {"message": "m"}}).error, "m")
+	assert_eq(GenProviders.parse_status("meshy", 429, null).retryable, true)
+	assert_eq(GenProviders.status_request("meshy", "B", "k", "image-to-3d", "x").url, "B/openapi/v1/image-to-3d/x")
+
+
+func test_gen_dry_run_spends_nothing() -> void:
+	var existed := _preset_existed()
+	var pair := _gen()
+	var gen: GenTools = pair[0]
+	var fake: FakeTransport = pair[1]
+	gen.settings_override.meshy_api_key = ""
+	var id := ASSET_PREFIX + "dry"
+	var r := gen.asset_generate({"kind": "weapon", "asset_id": id, "prompt": "compact smg", "dry_run": true})
+	assert_has_key(r, "data", str(r))
+	assert_eq(r.data.estimated_credits.total, 50)
+	assert_has_key(r.data, "warning", "missing key is reported")
+	assert_eq(r.data.api_key, "missing")
+	assert_eq(fake.requests.size(), 0)
+	assert_false(FileAccess.file_exists(GenTools.job_path(id)), "no job file")
+	assert_eq(_preset_existed(), existed, "dry_run does not write the preset")
+	## Without dry_run the missing key stops it, telling where to enter it.
+	var e := gen.asset_generate({"kind": "weapon", "asset_id": id, "prompt": "compact smg"})
+	assert_is_error(e, "INVALID_PARAMS")
+	assert_contains(String(e.error.message), "Editor Settings")
+	assert_is_error(gen.asset_generate({"kind": "weapon", "asset_id": id}), "INVALID_PARAMS")
+	assert_is_error(gen.asset_generate({"kind": "gun", "asset_id": id, "prompt": "x"}), "INVALID_PARAMS")
+	assert_is_error(gen.asset_generate({"kind": "weapon", "asset_id": id, "prompt": "x", "provider": "other"}), "INVALID_PARAMS")
+	_drop_preset(existed)
+
+
+func test_gen_daily_limit() -> void:
+	var existed := _preset_existed()
+	var pair := _gen()
+	var gen: GenTools = pair[0]
+	gen.settings_override.daily_task_limit = 3
+	gen.record_usage(2, 40, "earlier")
+	assert_eq(gen.usage_today().tasks, 2)
+	var r := gen.asset_generate({"kind": "item", "asset_id": ASSET_PREFIX + "limit", "prompt": "can of beans"})
+	assert_is_error(r, "INVALID_PARAMS")
+	assert_contains(String(r.error.message), "daily")
+	var dry := gen.asset_generate({"kind": "item", "asset_id": ASSET_PREFIX + "limit", "prompt": "can of beans", "dry_run": true})
+	assert_has_key(dry.data, "warning_limit")
+	_remove_gen_test_files()
+	_drop_preset(existed)
+
+
+func test_gen_meshy_text_flow_to_import() -> void:
+	var existed := _preset_existed()
+	var pair := _gen("meshy")
+	var gen: GenTools = pair[0]
+	var fake: FakeTransport = pair[1]
+	var id := ASSET_PREFIX + "medkit"
+	var r := gen.asset_generate({"kind": "item", "asset_id": id, "prompt": "first aid kit"})
+	assert_has_key(r, "data", str(r))
+	assert_eq(r.data.stage, "generating")
+	assert_eq(r.data.candidates.size(), 2)
+	assert_eq(fake.requests.size(), 2)
+	assert_eq(fake.requests[0].body.mode, "preview")
+	assert_eq(gen.usage_today().tasks, 2)
+	assert_true(FileAccess.file_exists(GenTools.job_path(id)))
+	assert_true(FileAccess.file_exists(GenTools.PRESET_PATH), "preset created on first use")
+	## A second start is refused while the job is open.
+	assert_is_error(gen.asset_generate({"kind": "item", "asset_id": id, "prompt": "first aid kit"}), "ALREADY_EXISTS")
+	## Not finished yet.
+	var s := gen.asset_job({"asset_id": id})
+	assert_eq(s.data.stage, "generating")
+	assert_is_error(gen.asset_job({"op": "pick", "asset_id": id, "index": 1}), "INVALID_PARAMS")
+	fake.finish_all()
+	s = gen.asset_job({"asset_id": id})
+	assert_eq(s.data.stage, "candidates_ready", str(s))
+	assert_true(FileAccess.file_exists(String(s.data.candidates[0].preview)), "thumbnail saved")
+	## The pipeline stops here for the user's choice.
+	var stop := gen.asset_pipeline({"asset_id": id})
+	assert_true(String(stop.data.next).begins_with("STOP"), stop.data.next)
+	## Pick 2: textures it (one more task).
+	var pk := gen.asset_job({"op": "pick", "asset_id": id, "index": 2})
+	assert_eq(pk.data.stage, "texturing", str(pk))
+	var refine: Dictionary = fake.requests[fake.requests.size() - 1]
+	assert_eq(refine.body.mode, "refine")
+	assert_eq(refine.body.preview_task_id, "task2")
+	assert_eq(gen.usage_today().tasks, 3)
+	assert_is_error(gen.asset_job({"op": "pick", "asset_id": id, "index": 1}), "ALREADY_EXISTS")
+	fake.finish_all()
+	var done := gen.asset_pipeline({"asset_id": id, "cleanup": false, "swap": false, "dest_dir": ASSET_KNOWN_DIR, "preview": false})
+	assert_has_key(done, "data", str(done))
+	assert_eq(done.data.stage, "done", str(done))
+	assert_true(String(fake.downloads[fake.downloads.size() - 1]).ends_with("task3.glb"), "downloads the textured model")
+	assert_true(FileAccess.file_exists(ASSET_KNOWN_DIR + "/" + id + ".glb"), "imported")
+	assert_eq(done.data.import.triangles, 12)
+	var job: Dictionary = GenTools.load_job(id)
+	assert_eq(job.pick.index, 2)
+	var listed := gen.asset_job({"op": "list"})
+	assert_true(listed.data.jobs.any(func(j): return j.asset_id == id))
+	_remove_gen_test_files()
+	_drop_preset(existed)
+
+
+func test_gen_tripo_image_job() -> void:
+	var existed := _preset_existed()
+	var pair := _gen("tripo")
+	var gen: GenTools = pair[0]
+	var fake: FakeTransport = pair[1]
+	var img := Image.create(64, 64, false, Image.FORMAT_RGBA8)
+	var png := ProjectSettings.globalize_path(WORK_DIR + "/ref/front.png")
+	DirAccess.make_dir_recursive_absolute(png.get_base_dir())
+	img.save_png(png)
+	var id := ASSET_PREFIX + "crate"
+	var r := gen.asset_generate({"kind": "prop", "asset_id": id, "prompt": "supply crate", "reference_image": png, "candidates": 1})
+	assert_has_key(r, "data", str(r))
+	assert_eq(r.data.mode, "image")
+	assert_true(fake.requests[0].has("multipart"), "the image is uploaded first")
+	assert_eq(fake.requests[1].body.input, "file_tok")
+	assert_eq(fake.requests[1].body.texture, true)
+	fake.finish_all()
+	gen.asset_job({"asset_id": id})
+	var pk := gen.asset_job({"op": "pick", "asset_id": id, "index": 1})
+	assert_eq(pk.data.stage, "ready", "image candidates need no texture task")
+	assert_eq(gen.usage_today().tasks, 1)
+	var c := gen.asset_job({"op": "cancel", "asset_id": id})
+	assert_eq(c.data.stage, "canceled")
+	## A canceled job can be replaced without overwrite.
+	var again := gen.asset_generate({"kind": "prop", "asset_id": id, "prompt": "supply crate", "dry_run": true})
+	assert_has_key(again, "data", str(again))
+	_remove_gen_test_files()
+	_drop_preset(existed)
+
+
+func test_gen_failed_create_reported() -> void:
+	var existed := _preset_existed()
+	var pair := _gen("meshy")
+	var gen: GenTools = pair[0]
+	var fake: FakeTransport = pair[1]
+	fake.fail_create_code = 402
+	var r := gen.asset_generate({"kind": "item", "asset_id": ASSET_PREFIX + "broke", "prompt": "bottle"})
+	assert_is_error(r, "INTERNAL_ERROR")
+	assert_contains(String(r.error.message), "credits")
+	assert_eq(fake.requests.size(), 1, "stops at the first refusal")
+	assert_eq(gen.usage_today().tasks, 0)
+	var b := gen.asset_job({"op": "balance"})
+	assert_eq(b.data.providers.meshy.balance, 123)
+	assert_eq(b.data.providers.tripo.balance, 45.0)
+	_remove_gen_test_files()
+	_drop_preset(existed)
+
+
+func test_gen_pipeline_swap_defaults() -> void:
+	var cfg := {"swap": null}
+	assert_eq(GenTools._swap_params("weapon", "smg", cfg), {"target": "weapon", "asset_id": "smg"})
+	assert_eq(GenTools._swap_params("item", "medkit", cfg), {"target": "item", "item_id": "medkit"})
+	assert_eq(GenTools._swap_params("character", "grunt", cfg), null)
+	assert_eq(GenTools._swap_params("weapon", "smg", {"swap": false}), null)
+	assert_eq(GenTools._swap_params("character", "grunt", {"swap": {"target": "enemy"}}), {"target": "enemy", "asset_id": "grunt"})
+	assert_is_error(GenTools._swap_params("prop", "crate", {"swap": {"group": "Crates"}}), "INVALID_PARAMS")
+	assert_is_error(GenTools._swap_params("weapon", "smg", {"swap": {"target": "weapon", "revert": true}}), "INVALID_PARAMS")
+	var pair := _gen()
+	var gen: GenTools = pair[0]
+	assert_is_error(gen.asset_pipeline({"asset_id": "x", "swap": "yes"}), "INVALID_PARAMS")
+	assert_is_error(gen.asset_pipeline({"asset_id": "x", "cleanup_options": {"source": "a"}}), "INVALID_PARAMS")
+	assert_is_error(gen.asset_job({"op": "status", "asset_id": "zz_never_made"}), "NODE_NOT_FOUND")
