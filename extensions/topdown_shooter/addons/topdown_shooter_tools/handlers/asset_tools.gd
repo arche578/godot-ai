@@ -55,7 +55,12 @@ const SIZE_SANITY := {
 const SIZE_MODES := ["height", "length", "width", "max", "keep"]
 const ORIGIN_MODES := ["bottom_center", "center", "grip", "keep"]
 const AXES := ["auto", "+x", "-x", "+y", "-y", "+z", "-z"]
-const IMPORT_WAIT_SEC := 45.0
+const IMPORT_WAIT_SEC := 90.0
+## Time kept back from a deferred call's deadline to send the reply.
+const REPLY_MARGIN_MSEC := 5000
+## Longest wait for the preview's frames (an unfocused or hidden editor
+## window may not draw at all).
+const PREVIEW_WAIT_MSEC := 8000
 const PREVIEW_SIZE := 512
 
 ## A blender run that is still going (asset_cleanup is one at a time).
@@ -241,11 +246,7 @@ func _cleanup_async(p: Dictionary, blender: String, job: Dictionary, import_p: V
 		ctx.send_deferred(result)
 		return
 	var data: Dictionary = result.data
-	if data.get("import", {}).get("import_pending", false):
-		var waited := await wait_for_import(import_p.dest)
-		data["import"] = finish_import(import_p, waited)
-	if import_p.preview and not data["import"].has("error"):
-		data["import"]["preview"] = await render_preview(import_p.dest, preview_path(import_p.asset_id))
+	data["import"] = await _settle_import(import_p, data["import"], ctx)
 	_busy = false
 	ctx.send_deferred({"data": data})
 
@@ -335,6 +336,8 @@ static func find_blender(wanted: String) -> String:
 # =============================================================================
 
 func asset_import(params: Dictionary, ctx = null) -> Dictionary:
+	if params.get("inspect_only", false) == true:
+		return _inspect_only(params, ctx)
 	var p: Variant = read_import_params(params)
 	if Util.is_error(p):
 		return p
@@ -357,13 +360,59 @@ func asset_import(params: Dictionary, ctx = null) -> Dictionary:
 	return {"_deferred": true}
 
 
+## Report (and preview) for a model already in the rule folder, without
+## copying anything: for a call that ran out of time, or after edits.
+func _inspect_only(params: Dictionary, ctx) -> Dictionary:
+	var allowed := ["inspect_only", "kind", "asset_id", "dest_dir", "source", "preview"]
+	for key in params:
+		if not key in allowed:
+			return Util.error(Util.INVALID_PARAMS, "with inspect_only=true only %s are allowed (got '%s')" % [", ".join(allowed), key])
+	var common: Variant = _read_common(params)
+	if Util.is_error(common):
+		return common
+	var p: Dictionary = common
+	var dest_dir: Variant = Util.text(params, "dest_dir", "")
+	if Util.is_error(dest_dir):
+		return dest_dir
+	var dir := Util.clean_dir(dest_dir) if not String(dest_dir).is_empty() else default_dest_dir(p.kind, p.asset_id)
+	var dest := ""
+	for ext in MODEL_EXTENSIONS:
+		var candidate: String = dir + "/" + p.asset_id + "." + ext
+		if FileAccess.file_exists(candidate):
+			dest = candidate
+			break
+	if dest.is_empty():
+		return Util.error(Util.INVALID_PARAMS, "no %s.(%s) in %s; import it first" % [p.asset_id, "|".join(MODEL_EXTENSIONS), dir])
+	p["dest_dir"] = dir
+	p["dest"] = dest
+	p["source"] = dest
+	var data := {"asset_id": p.asset_id, "kind": p.kind, "path": dest, "import_pending": not _import_valid(dest), "reimport": false}
+	if not data.import_pending:
+		data = finish_import(p, true)
+	if ctx == null or not ctx.has_method("send_deferred"):
+		if data.get("import_pending", false):
+			data["note"] = "the editor has not imported %s yet; try again in a moment" % dest
+		return {"data": data}
+	_import_async(p, data, ctx)
+	return {"_deferred": true}
+
+
 func _import_async(p: Dictionary, data: Dictionary, ctx) -> void:
+	ctx.send_deferred({"data": await _settle_import(p, data, ctx)})
+
+
+## Waits for a pending import and renders the preview, both within the
+## call's deadline, so the reply always arrives before the MCP timeout.
+func _settle_import(p: Dictionary, data: Dictionary, ctx) -> Dictionary:
+	var deadline := 0
+	if ctx != null and "deadline_msec" in ctx and int(ctx.deadline_msec) > 0:
+		deadline = int(ctx.deadline_msec) - REPLY_MARGIN_MSEC
 	if data.get("import_pending", false):
-		var waited := await wait_for_import(p.dest)
+		var waited := await wait_for_import(p.dest, bool(data.get("reimport", false)), deadline)
 		data = finish_import(p, waited)
-	if p.preview and not data.has("error"):
-		data["preview"] = await render_preview(p.dest, preview_path(p.asset_id))
-	ctx.send_deferred({"data": data})
+	if p.preview and not data.has("error") and not data.get("import_pending", false):
+		data["preview"] = await render_preview(p.dest, preview_path(p.asset_id), deadline)
+	return data
 
 
 static func read_import_params(params: Dictionary) -> Variant:
@@ -470,13 +519,18 @@ func import_asset(p: Dictionary) -> Dictionary:
 	var copied: Array = []
 	for c in copies:
 		copied.append(c[1])
-	if not folder_known(p.dest_dir):
+	var known := folder_known(p.dest_dir)
+	var efs := EditorInterface.get_resource_filesystem() if Engine.is_editor_hint() else null
+	if not known or efs == null or efs.is_scanning() or efs.is_importing():
+		## A reimport_files() while the editor imports something else
+		## collides ("Task 'reimport' already exists"); wait_for_import()
+		## starts ours once the editor is idle.
 		return {"data": {
 			"asset_id": p.asset_id, "kind": p.kind, "path": p.dest, "copied": copied,
-			"import_pending": true,
-			"note": "%s is a new folder; the editor imports the model on its next file scan (asset_import/asset_cleanup wait for it)." % p.dest_dir,
+			"import_pending": true, "reimport": known,
+			"note": ("%s is a new folder; the editor imports the model on its next file scan" % p.dest_dir if not known
+				else "the editor is busy importing; %s is imported when it is done" % p.dest) + " (asset_import/asset_cleanup wait for it).",
 		}}
-	var efs := EditorInterface.get_resource_filesystem()
 	efs.update_file(p.dest)
 	efs.reimport_files(PackedStringArray([p.dest]))
 	return {"data": finish_import(p, true)}
@@ -486,13 +540,16 @@ func import_asset(p: Dictionary) -> Dictionary:
 func finish_import(p: Dictionary, imported: bool) -> Dictionary:
 	var data := {"asset_id": p.asset_id, "kind": p.kind, "path": p.dest, "source": p.source}
 	if not imported:
-		data["error"] = "the editor did not import %s in time; focus the Godot window (or run filesystem_manage op=scan) and call asset_import again with overwrite=true" % p.dest
+		data["import_pending"] = true
+		data["note"] = "the editor had not finished importing %s when this call ran out of time. Focus the Godot window, then call asset_import kind=%s asset_id=%s inspect_only=true for the report." % [p.dest, p.kind, p.asset_id]
 		return data
 	var info := inspect_model(p.dest, p.kind)
 	if info.has("error"):
 		data["error"] = info.error
 		return data
 	data.merge(info)
+	_append_record(p.asset_id, {"step": "report", "path": p.dest, "size": info.get("size"), "triangles": info.get("triangles"),
+		"materials": info.get("materials"), "textures": info.get("textures"), "warnings": info.get("warnings")})
 	data["undo"] = "One editor undo step (Edit > Undo) restores the files as they were before this import."
 	data["next"] = _next_hint(p.kind, p.asset_id, p.dest)
 	return data
@@ -576,16 +633,21 @@ static func folder_known(res_dir: String) -> bool:
 
 ## Waits until `path` is imported. A folder the editor has not seen yet
 ## gets one incremental scan_sources() (never a full scan()).
-func wait_for_import(path: String) -> bool:
+## `reimport`: the file changed in a known folder, so an older import may
+## still look valid; import it again once the editor is idle.
+## `deadline_msec` (Time.get_ticks_msec) caps the wait for deferred calls.
+func wait_for_import(path: String, reimport := false, deadline_msec := 0) -> bool:
 	if not Engine.is_editor_hint():
 		return false
 	var efs := EditorInterface.get_resource_filesystem()
 	var tree := Engine.get_main_loop() as SceneTree
 	var deadline := Time.get_ticks_msec() + int(IMPORT_WAIT_SEC * 1000.0)
+	if deadline_msec > 0:
+		deadline = mini(deadline, deadline_msec)
 	var asked := false
 	while Time.get_ticks_msec() < deadline:
 		if not efs.is_scanning() and not efs.is_importing():
-			if _import_valid(path):
+			if (asked or not reimport) and _import_valid(path):
 				return true
 			if not asked:
 				asked = true
@@ -777,9 +839,14 @@ static func _v3(v: Vector3) -> Array:
 ## Renders the model from a 3/4 top-down angle into a PNG (needs a GUI
 ## editor; a headless one has no renderer). Returns the res:// path or a
 ## note. Coroutine.
-func render_preview(model_path: String, png_path: String) -> Variant:
+func render_preview(model_path: String, png_path: String, deadline_msec := 0) -> Variant:
 	if DisplayServer.get_name() == "headless":
 		return "skipped (headless editor has no renderer)"
+	var stop := Time.get_ticks_msec() + PREVIEW_WAIT_MSEC
+	if deadline_msec > 0:
+		stop = mini(stop, deadline_msec)
+	if stop - Time.get_ticks_msec() < 1000:
+		return "skipped (out of time; call asset_import inspect_only=true for a preview)"
 	var packed := load(model_path) as PackedScene
 	if packed == null:
 		return "skipped (model did not load)"
@@ -815,8 +882,18 @@ func render_preview(model_path: String, png_path: String) -> Variant:
 	e.ambient_light_energy = 0.6
 	env.environment = e
 	vp.add_child(env)
-	for i in 3:
-		await RenderingServer.frame_post_draw
+	var frames := [0]
+	var count := func() -> void: frames[0] += 1
+	RenderingServer.frame_post_draw.connect(count)
+	## The editor (low processor mode) only draws when something asks.
+	var base := EditorInterface.get_base_control()
+	while frames[0] < 3 and Time.get_ticks_msec() < stop:
+		base.queue_redraw()
+		await tree.create_timer(0.05).timeout
+	RenderingServer.frame_post_draw.disconnect(count)
+	if frames[0] < 3:
+		vp.queue_free()
+		return "skipped (the editor window is not drawing; bring Godot to the front and call asset_import inspect_only=true)"
 	var image := vp.get_texture().get_image()
 	vp.queue_free()
 	if image == null or image.is_empty():

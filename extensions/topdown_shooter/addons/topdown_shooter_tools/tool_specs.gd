@@ -521,9 +521,10 @@ static func definitions() -> Array[Dictionary]:
 			"schema": {
 				"type": "object",
 				"additionalProperties": false,
-				"required": ["source", "kind", "asset_id"],
+				"required": ["kind", "asset_id"],
 				"properties": {
-					"source": _desc(_STR, "Model file: absolute path, ~/..., or res://."),
+					"source": _desc(_STR, "Model file: absolute path, ~/..., or res://. Required unless inspect_only."),
+					"inspect_only": _desc(_BOOL, "Copy nothing; report (and preview) the model already in the folder. Use after a call ran out of time."),
 					"kind": _desc({"type": "string", "enum": ["weapon", "item", "prop", "character"]}, "Folder and budget."),
 					"asset_id": _desc(_STR, "lowercase_id, the same as the item/weapon id."),
 					"dest_dir": _desc(_STR, "Override the folder. Default res://assets/<kind>s/<asset_id>."),
@@ -554,7 +555,7 @@ static func definitions() -> Array[Dictionary]:
 					"map_path": _desc(_STR, "target=map: the map root (default: the raid_map_blockout map in the open scene)."),
 					"group": _desc(_STR, "target=map: Walls, Cover, Crates or Floors."),
 					"name_prefix": _desc(_STR, "target=map: only boxes whose name starts with this (LowWall, Pillar, Crate...)."),
-					"fit": _desc({"type": "string", "enum": ["auto", "height", "fit", "stretch", "tile", "none"]}, "auto: player/enemy height, weapon none, Walls/Floors tile, others fit."),
+					"fit": _desc({"type": "string", "enum": ["auto", "height", "fit", "fill", "stretch", "tile", "none"]}, "auto: player/enemy height, weapon none, Walls/Floors tile, others fit. fill: footprint kept in proportion, height to the box (matches collision)."),
 					"size": _desc(_range(0, 1000), "height: model height in m (default the capsule); fit: largest side in m."),
 					"yaw_degrees": _desc(_range(-360, 360), "Turn the model around Y. Default 0."),
 					"move_muzzle": _desc(_BOOL, "weapon: move Muzzle to the model. Default true."),

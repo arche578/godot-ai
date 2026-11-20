@@ -32,7 +32,10 @@ const ItemTools := preload("res://addons/topdown_shooter_tools/handlers/item_too
 const InventoryTools := preload("res://addons/topdown_shooter_tools/handlers/inventory_tools.gd")
 
 const TARGETS := ["player", "enemy", "weapon", "map", "node", "item"]
-const FITS := ["auto", "height", "fit", "stretch", "tile", "none"]
+const FITS := ["auto", "height", "fit", "fill", "stretch", "tile", "none"]
+## A fitted model smaller than this share of its box on any axis gets a
+## warning: what you see no longer matches what blocks bullets.
+const MISMATCH_RATIO := 0.6
 const TARGET_KIND := {"player": "character", "enemy": "character", "weapon": "weapon", "map": "prop", "node": "prop", "item": "item"}
 const DEFAULT_PLAYER_SCENE := "res://scenes/player/player.tscn"
 const DEFAULT_ENEMY_DIR := "res://scenes/enemies"
@@ -183,7 +186,7 @@ func _plan(root: Node, p: Dictionary) -> Variant:
 		var swap := {
 			"host": ph.host, "hide": ph.hide, "skin_name": ph.skin_name, "label": ph.label,
 			"old_skin": ph.host.get_node_or_null(NodePath(ph.skin_name)),
-			"transforms": [], "muzzle": null, "muzzle_to": Vector3.ZERO, "fit": "",
+			"transforms": [], "muzzle": null, "muzzle_to": Vector3.ZERO, "fit": "", "box": ph.box,
 		}
 		if not p.revert:
 			var fit: String = p.fit if p.fit != "auto" else ph.default_fit
@@ -322,16 +325,18 @@ static func _box_in(node: Node3D, host: Node) -> AABB:
 ## Transforms (host space) of one or more model copies filling `box`.
 ##   none: no scaling, model origin at the box's bottom center (or the host
 ##         origin when align_origin). height: uniform, model height = box
-##         height (or `size`). fit: uniform, inside the box. stretch: each
-##         axis to the box. tile: copies along the box's long side, each
+##         height (or `size`). fit: uniform, inside the box. fill: the
+##         footprint uniform inside the box, the height stretched to the
+##         box's (the model then covers its collision). stretch: each axis
+##         to the box. tile: copies along the box's long side, each
 ##         stretched to its share (walls).
-## fit/stretch/tile turn the model 90 degrees when its long side does not
-## match the box's.
+## fit/fill/stretch/tile turn the model 90 degrees when its long side does
+## not match the box's.
 static func fit_transforms(model: AABB, box: AABB, fit: String, yaw_degrees: float, size: float, align_origin: bool) -> Array:
 	var ms := model.size
 	var bs := box.size
 	var turn := 0.0
-	if fit in ["fit", "stretch", "tile"] and absf(bs.x - bs.z) > 0.01 and absf(ms.x - ms.z) > 0.01 and (bs.x > bs.z) != (ms.x > ms.z):
+	if fit in ["fit", "fill", "stretch", "tile"] and absf(bs.x - bs.z) > 0.01 and absf(ms.x - ms.z) > 0.01 and (bs.x > bs.z) != (ms.x > ms.z):
 		turn = 90.0
 	var basis_rot := Basis(Vector3.UP, deg_to_rad(yaw_degrees + turn))
 	## Model size along host axes once turned (x and z swap at 90 / 270).
@@ -357,6 +362,12 @@ static func fit_transforms(model: AABB, box: AABB, fit: String, yaw_degrees: flo
 			if size > 0.0:
 				k = size / maxf(maxf(mx, my), mz)
 			var b := basis_rot * Basis.from_scale(Vector3(k, k, k))
+			var target := Vector3(box.get_center().x, box.position.y, box.get_center().z)
+			out.append(Transform3D(b, target - b * anchor_model))
+		"fill":
+			var k := minf(bs.x / maxf(mx, 0.0001), bs.z / maxf(mz, 0.0001))
+			var ky := bs.y / maxf(my, 0.0001)
+			var b := basis_rot * Basis.from_scale(Vector3(k, ky, k))
 			var target := Vector3(box.get_center().x, box.position.y, box.get_center().z)
 			out.append(Transform3D(b, target - b * anchor_model))
 		"stretch", "tile":
@@ -532,6 +543,7 @@ static func _hidden_paths(skin: Node) -> Array:
 func _report(root: Node, p: Dictionary, plan: Dictionary) -> Dictionary:
 	var swaps: Array = []
 	var copies := 0
+	var mismatched: Array[String] = []
 	for swap in plan.swaps:
 		var entry := {"placeholder": swap.label, "skin": Util.scene_path_of(swap.host, root) + "/" + swap.skin_name}
 		if not p.revert:
@@ -540,7 +552,12 @@ func _report(root: Node, p: Dictionary, plan: Dictionary) -> Dictionary:
 			copies += swap.transforms.size()
 			var t: Transform3D = swap.transforms[0]
 			entry["scale"] = AssetTools._v3(t.basis.get_scale())
-			entry["size"] = AssetTools._v3((t * plan.model_box).size)
+			var fitted: Vector3 = (t * plan.model_box).size
+			entry["size"] = AssetTools._v3(fitted)
+			var box: AABB = swap.box
+			entry["box"] = AssetTools._v3(box.size)
+			if swap.fit in ["fit", "fill"] and (fitted.y < box.size.y * MISMATCH_RATIO or maxf(fitted.x, fitted.z) < maxf(box.size.x, box.size.z) * MISMATCH_RATIO):
+				mismatched.append("%s (model %.2fx%.2fx%.2f m in a %.2fx%.2fx%.2f m box)" % [swap.label, fitted.x, fitted.y, fitted.z, box.size.x, box.size.y, box.size.z])
 			if swap.old_skin != null:
 				entry["replaced_skin"] = true
 		if swap.muzzle != null:
@@ -554,6 +571,8 @@ func _report(root: Node, p: Dictionary, plan: Dictionary) -> Dictionary:
 		out["model_copies"] = copies
 	out["swaps"] = swaps if swaps.size() <= 30 else swaps.slice(0, 30) + [{"more": swaps.size() - 30}]
 	out["kept"] = "Collision shapes, scripts and other nodes are unchanged; the placeholder meshes are hidden, not deleted."
+	if not mismatched.is_empty():
+		out["warnings"] = ["The model covers much less than its collision box at %d of %d placeholders, e.g. %s. Use fit=fill (height to the box), fit=stretch, or a model closer to the box's proportions." % [mismatched.size(), plan.swaps.size(), mismatched[0]]]
 	if p.target == "weapon" and not plan.model_has_muzzle and not p.revert:
 		out["note"] = "The model has no Muzzle node; Muzzle was put at its front-most point. asset_cleanup adds a Muzzle to weapons."
 	return out
