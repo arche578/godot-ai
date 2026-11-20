@@ -14,6 +14,9 @@ extends Resource
 @export_enum("weapon", "ammo", "armor", "helmet", "backpack", "medical", "food", "key", "valuable", "material", "misc") var category := "misc"
 @export_enum("common", "uncommon", "rare", "epic", "legendary") var rarity := "common"
 @export var icon: Texture2D
+## 3D model shown when the item lies on the ground (asset_import /
+## swap_placeholder fill this in). Empty: a box in the rarity color.
+@export_file("*.glb", "*.gltf", "*.fbx", "*.obj", "*.tscn", "*.scn") var model := ""
 ## Kilograms per unit.
 @export var weight := 0.1
 ## Sell price per unit.
