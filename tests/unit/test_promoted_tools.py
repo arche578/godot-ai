@@ -10,9 +10,12 @@ from godot_ai.services.custom_tool_service import (
     CustomToolService,
 )
 from godot_ai.services.promoted_tools import (
+    DEFAULT_MAX_PROMOTED_TOOLS,
     MAX_PROMOTED_TOOLS,
+    MAX_PROMOTED_TOOLS_ENV,
     PROMOTED_PREFIX,
     PromotedToolRegistrar,
+    max_promoted_tools,
 )
 
 
@@ -198,3 +201,36 @@ def test_get_all_tools_session_scope_includes_disabled(stack) -> None:
     names = {t.name for t in service.get_all_tools(session_id="s1")}
     assert names == {"off", "on"}
     assert {t.name for t in service.get_tools(session_id="s1")} == {"on"}
+
+
+def test_promoted_tools_are_deferred(stack) -> None:
+    ## Fork: promoted tools load on demand in tool-search clients, like
+    ## the built-in non-core tools.
+    service, mcp, _ = stack
+    service.update_session_tools("s1", [_tool("a")])
+    assert mcp.tools[PROMOTED_PREFIX + "a"].meta == {"defer_loading": True}
+
+
+def test_default_cap_fits_a_genre_addon(stack, monkeypatch) -> None:
+    monkeypatch.delenv(MAX_PROMOTED_TOOLS_ENV, raising=False)
+    assert max_promoted_tools() == DEFAULT_MAX_PROMOTED_TOOLS == 32
+    service, mcp, _ = stack
+    service.update_session_tools("s1", [_tool(f"t{i:02d}") for i in range(23)])
+    assert len(mcp.tools) == 23
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [("3", 3), (" 12 ", 12), ("0", 0), ("-5", 0), ("999", 128), ("lots", 32), ("", 32)],
+)
+def test_cap_env_override(monkeypatch, raw: str, expected: int) -> None:
+    monkeypatch.setenv(MAX_PROMOTED_TOOLS_ENV, raw)
+    assert max_promoted_tools() == expected
+
+
+def test_cap_env_override_applies_on_sync(stack, monkeypatch) -> None:
+    monkeypatch.setenv(MAX_PROMOTED_TOOLS_ENV, "2")
+    service, mcp, _ = stack
+    service.update_session_tools("s1", [_tool("c"), _tool("a"), _tool("b")])
+    assert set(mcp.tools) == {PROMOTED_PREFIX + "a", PROMOTED_PREFIX + "b"}
+    assert service.get_tool("c", session_id="s1") is not None

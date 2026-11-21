@@ -15,6 +15,7 @@ edits to upstream files.
 | --- | --- | --- |
 | Telemetry | On by default, opt out with `GODOT_AI_DISABLE_TELEMETRY=true` | Off by default. Opt in with the dock checkbox or `GODOT_AI_ENABLE_TELEMETRY=true`. `GODOT_AI_DISABLE_TELEMETRY` still wins. |
 | Attach CLI | `--disable-telemetry` | Also accepts `--enable-telemetry` |
+| Promoted custom tools | At most 8 `custom_*` tools (first 8 by name), schemas always loaded | Cap defaults to 32 and is read from `GODOT_AI_MAX_PROMOTED_TOOLS` (0 to 128, set in the environment of the server process). Promoted tools carry `defer_loading` like built-in non-core tools. Changed: `src/godot_ai/services/promoted_tools.py`, `docs/plugin-architecture.md`, `tests/unit/test_promoted_tools.py` |
 | Upstream sync | n/a | `.github/workflows/fork-sync-upstream.yml` mirrors upstream tags, merges upstream `main` weekly into `sync/upstream` and opens a PR |
 
 ## One-time GitHub setup

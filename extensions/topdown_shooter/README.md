@@ -25,8 +25,9 @@
    `custom_asset_cleanup`, `custom_asset_import`, `custom_swap_placeholder`,
    `custom_asset_generate`, `custom_asset_job`, `custom_asset_pipeline`,
    `custom_polyhaven_fetch`, `custom_environment_setup`, `custom_item_icon_render`,
-   `custom_character_anim_setup`, `custom_asset_audit`라는 이름으로 나타납니다(승격 도구). 다만 Godot AI 서버가
-   승격 도구를 이름순 8개까지만 등록하므로, 나머지는
+   `custom_character_anim_setup`, `custom_asset_audit`라는 이름으로 나타납니다(승격 도구). 이 포크의
+   Godot AI 서버는 승격 도구를 이름순 32개까지 등록하고(환경 변수 `GODOT_AI_MAX_PROMOTED_TOOLS`로 조정,
+   `FORK.md` 참고), 도구 검색을 쓰는 클라이언트에서는 필요할 때만 스키마를 불러옵니다. 상한을 넘는 도구는
    `custom_manage(op="invoke", params={"tool_name": ..., "params": {...}})`로 부릅니다.
 
 ## 도구

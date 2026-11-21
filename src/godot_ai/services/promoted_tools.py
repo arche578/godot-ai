@@ -8,12 +8,15 @@ cannot validate params or surface the tool natively. A spec that sets
 ``tools/list_changed`` broadcast the catalog already emits.
 
 Budget: the repo deliberately caps its tool surface (see
-``docs/tool-surface.md``), so promotion is capped at
-``MAX_PROMOTED_TOOLS``; overflow tools stay fully reachable through
-``custom_manage`` and the cap is logged once per sync.
+``docs/tool-surface.md``), so promotion is capped (fork: default
+``DEFAULT_MAX_PROMOTED_TOOLS``, override with the
+``GODOT_AI_MAX_PROMOTED_TOOLS`` environment variable); overflow tools stay
+fully reachable through ``custom_manage`` and the cap is logged once per
+sync. Promoted tools carry ``defer_loading`` like the built-in non-core
+tools, so tool-search clients load their schemas only on demand.
 
 Sessions: registration is NAME-level across sessions (deterministic:
-sorted names, first ``MAX_PROMOTED_TOOLS``). Dispatch is unchanged — a
+sorted names, first ``max_promoted_tools()``). Dispatch is unchanged — a
 promoted call routes through :func:`custom_invoke`, which resolves the
 ACTIVE session's definition, so a name promoted by a disconnected or
 inactive editor fails with the same clear error as ``custom_manage``.
@@ -22,11 +25,14 @@ inactive editor fails with the same clear error as ``custom_manage``.
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from fastmcp.tools import Tool, ToolResult
 from pydantic import PrivateAttr
+
+from godot_ai.tools import DEFER_META
 
 if TYPE_CHECKING:
     from fastmcp import FastMCP
@@ -41,7 +47,37 @@ logger = logging.getLogger(__name__)
 ## "custom_" both namespaces away from built-ins (which never use the
 ## prefix) and tells the agent what it is at a glance.
 PROMOTED_PREFIX = "custom_"
-MAX_PROMOTED_TOOLS = 8
+## Fork change (see FORK.md): upstream hard-codes 8. A genre addon with
+## ~20 tools needs more, and defer_loading keeps the context cost down.
+DEFAULT_MAX_PROMOTED_TOOLS = 32
+MAX_PROMOTED_TOOLS = DEFAULT_MAX_PROMOTED_TOOLS
+MAX_PROMOTED_TOOLS_ENV = "GODOT_AI_MAX_PROMOTED_TOOLS"
+## Never promote more than one session may register at all.
+MAX_PROMOTED_TOOLS_CEILING = 128
+
+
+def max_promoted_tools() -> int:
+    """Promotion cap: ``GODOT_AI_MAX_PROMOTED_TOOLS`` or the default.
+
+    Read on every sync so a restarted server picks up a changed value.
+    Invalid values fall back to the default; the result is clamped to
+    ``0..MAX_PROMOTED_TOOLS_CEILING`` (0 turns promotion off).
+    """
+    raw = os.environ.get(MAX_PROMOTED_TOOLS_ENV, "").strip()
+    if not raw:
+        return DEFAULT_MAX_PROMOTED_TOOLS
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning(
+            "Ignoring %s=%r (not an integer); using %d",
+            MAX_PROMOTED_TOOLS_ENV,
+            raw,
+            DEFAULT_MAX_PROMOTED_TOOLS,
+        )
+        return DEFAULT_MAX_PROMOTED_TOOLS
+    return max(0, min(value, MAX_PROMOTED_TOOLS_CEILING))
+
 
 _EMPTY_SCHEMA: dict[str, Any] = {"type": "object", "properties": {}}
 
@@ -145,13 +181,16 @@ class PromotedToolRegistrar:
             if definition.promoted and not definition.enabled and definition.name not in promoted:
                 disabled.setdefault(definition.name, definition)
 
-        chosen = sorted(promoted)[:MAX_PROMOTED_TOOLS]
-        capped = frozenset(sorted(promoted)[MAX_PROMOTED_TOOLS:])
+        cap = max_promoted_tools()
+        chosen = sorted(promoted)[:cap]
+        capped = frozenset(sorted(promoted)[cap:])
         if capped and capped != self._capped_logged:
             logger.warning(
-                "Promoted custom-tool cap (%d) reached; %s stay behind custom_manage",
-                MAX_PROMOTED_TOOLS,
+                "Promoted custom-tool cap (%d) reached; %s stay behind custom_manage "
+                "(raise it with %s)",
+                cap,
                 ", ".join(sorted(capped)),
+                MAX_PROMOTED_TOOLS_ENV,
             )
         self._capped_logged = capped
 
@@ -173,6 +212,7 @@ class PromotedToolRegistrar:
                 name=tool_name,
                 description=_describe(definition),
                 parameters=definition.params_schema or _EMPTY_SCHEMA,
+                meta=dict(DEFER_META),
             )
             tool._catalog_name = definition.name
             self._mcp.add_tool(tool)
