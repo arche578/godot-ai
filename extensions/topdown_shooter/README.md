@@ -11,6 +11,18 @@
 명칭을 넣지 않습니다. 그런 값은 게임 프로젝트 쪽 파일(예: `res://assets/style_preset.json`)에
 둡니다. `bandage`, `grunt` 같은 예시 id는 장르 공통이라 괜찮습니다.
 
+화면 문구·화폐·희귀도 색도 게임이 정합니다. 도구가 게임 스크립트(인벤토리, 은신처, 레이드, 플레이 메모)를
+복사할 때 `handlers/ui_text.gd`의 문구를 채워 넣고, 기본값은 영어·화폐 기호 없음입니다. 한국어와 원화로
+쓰려면 게임의 `res://assets/style_preset.json`에 다음을 넣습니다.
+
+```json
+"ui": {"locale": "ko", "money_format": "₩%s", "text": {}, "rarity_colors": {}}
+```
+
+`text`는 낱말 하나씩 바꾸고(키는 `ui_text.gd`), `rarity_colors`는 `"rare": "#4d80f2"`처럼 희귀도별 색을
+바꿉니다. 이미 복사된 스크립트는 그대로이므로, 바꾼 설정을 반영하려면 해당 도구를 `overwrite_scripts=true`로
+다시 실행합니다.
+
 ## 설치 (macOS, Windows 공통)
 
 1. 이 폴더의 `addons/topdown_shooter_tools/`를 게임 프로젝트의 `addons/` 아래로

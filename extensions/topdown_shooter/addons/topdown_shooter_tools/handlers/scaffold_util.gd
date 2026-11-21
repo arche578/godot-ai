@@ -10,6 +10,7 @@ extends RefCounted
 ## here in the same shape Godot AI's own handlers return.
 
 const TEMPLATE_DIR := "res://addons/topdown_shooter_tools/templates/"
+const UiText := preload("res://addons/topdown_shooter_tools/handlers/ui_text.gd")
 
 const INVALID_PARAMS := "INVALID_PARAMS"
 const NODE_NOT_FOUND := "NODE_NOT_FOUND"
@@ -118,7 +119,7 @@ static func install_script(template: String, dest: String, overwrite: bool) -> D
 	var existed := FileAccess.file_exists(dest)
 	var status := "kept"
 	if not existed or overwrite:
-		var source := FileAccess.get_file_as_string(TEMPLATE_DIR + template)
+		var source := template_source(template)
 		if source.is_empty():
 			return error(INTERNAL_ERROR, "template %s is missing or empty" % template)
 		var dir_err := ensure_dir(dest.get_base_dir())
@@ -141,6 +142,13 @@ static func install_script(template: String, dest: String, overwrite: bool) -> D
 	if probe.reload() != OK:
 		return error(INTERNAL_ERROR, "script %s does not compile; fix it or pass overwrite_scripts=true to restore the template" % dest)
 	return {"script": script, "status": status, "path": dest}
+
+
+## A template's text with its {{ui:...}}, {{money}} and {{rarity_color:...}}
+## tokens filled in from the game's style_preset.json "ui" section (see
+## ui_text.gd). Every copy of template text into a game goes through here.
+static func template_source(template: String) -> String:
+	return UiText.render(FileAccess.get_file_as_string(TEMPLATE_DIR + template))
 
 
 ## Packs `root` (all descendants already owned by it) and saves it. Frees

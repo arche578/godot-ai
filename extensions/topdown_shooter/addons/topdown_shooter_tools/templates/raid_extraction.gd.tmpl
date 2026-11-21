@@ -14,7 +14,7 @@ signal extraction_started(body: Node)
 signal extraction_cancelled(body: Node)
 signal extracted(body: Node)
 
-@export var extraction_name := "탈출 지점"
+@export var extraction_name := "{{ui:extraction}}"
 @export var extract_time := 5.0
 @export var player_group: StringName = &"player"
 ## Seconds after extracting before the scene reloads; 0 = never.
@@ -46,7 +46,7 @@ func _process(delta: float) -> void:
 		return
 	_timer += delta
 	var left := maxf(extract_time - _timer, 0.0)
-	_show_hud("%s: %.1f초 뒤 탈출" % [extraction_name, left])
+	_show_hud("{{ui:extract_in}}" % [extraction_name, left])
 	if _label != null:
 		_label.text = "%s\n%.1f" % [extraction_name, left]
 	if _timer >= extract_time:
@@ -64,17 +64,17 @@ func extract(body: Node) -> void:
 		return
 	is_done = true
 	_body = null
-	var message := "탈출 성공!"
+	var message := "{{ui:extracted}}"
 	var inventory := body.get_node_or_null(^"Inventory") if body != null else null
 	if inventory != null and inventory.has_method("get_total_value"):
-		message += "\n가져온 물건 가치: %s" % inventory.get_total_value()
+		message += "\n{{ui:loot_value}}: {{money}}" % inventory.get_total_value()
 	if body != null and body.has_method("on_extracted"):
 		body.on_extracted(self)
 	extracted.emit(body)
 	if body is Node:
 		(body as Node).process_mode = Node.PROCESS_MODE_DISABLED
 	if _label != null:
-		_label.text = "탈출 완료"
+		_label.text = "{{ui:extraction_done}}"
 	_show_hud(message, true)
 	if restart_delay > 0.0 and is_inside_tree():
 		await get_tree().create_timer(restart_delay).timeout

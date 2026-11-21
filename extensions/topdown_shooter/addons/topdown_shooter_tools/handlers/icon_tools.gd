@@ -534,7 +534,7 @@ static func plan_ui_patches(script_dir: String) -> Array:
 		if not FileAccess.file_exists(path):
 			continue
 		var src := FileAccess.get_file_as_string(path)
-		var patched: Variant = patch_ui_source(src, FileAccess.get_file_as_string(Util.TEMPLATE_DIR + spec.template), spec.anchor)
+		var patched: Variant = patch_ui_source(src, Util.template_source(spec.template), spec.anchor)
 		if patched == null:
 			continue
 		if patched is String and String(patched).begins_with("!"):

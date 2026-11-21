@@ -13,7 +13,7 @@ signal search_started(by: Node)
 signal search_cancelled(by: Node)
 signal opened(by: Node)
 
-@export var crate_name := "상자"
+@export var crate_name := "{{ui:crate}}"
 @export var interact_action: StringName = &"interact"
 ## Meters (on the ground plane) a player must be within to search.
 @export var interact_radius := 1.8
@@ -115,9 +115,9 @@ func _update_label(near: Node3D) -> void:
 		return
 	_label.visible = true
 	if _searcher != null and search_time > 0.0:
-		_label.text = "수색 중... %d%%" % int(clampf(_progress / search_time, 0.0, 1.0) * 100.0)
+		_label.text = "{{ui:searching}}" % int(clampf(_progress / search_time, 0.0, 1.0) * 100.0)
 	else:
-		_label.text = "[%s] %s 열기" % [_key_name(), crate_name]
+		_label.text = "{{ui:open_prompt}}" % [_key_name(), crate_name]
 
 
 func _key_name() -> String:

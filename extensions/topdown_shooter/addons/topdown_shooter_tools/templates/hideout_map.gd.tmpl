@@ -23,7 +23,7 @@ signal stash_opened
 signal stash_closed
 signal deploying(scene: String)
 
-@export var title := "은신처"
+@export var title := "{{ui:hideout_title}}"
 @export var player_path: NodePath = ^"Player"
 @export var stash_screen_path: NodePath = ^"StashScreen"
 ## The hideout.gd Control (stash + raid bag) inside the stash screen.
@@ -32,7 +32,7 @@ signal deploying(scene: String)
 @export var interact_action: StringName = &"interact"
 ## Also closes the stash (Tab/I from inventory_ui_scaffold).
 @export var toggle_action: StringName = &"inventory"
-## The deploy door is the way out: hide the screen's 출격 button.
+## The deploy door is the way out: hide the screen's Deploy button.
 @export var hide_menu_deploy_button := true
 ## Keep guns the player scene carries usable in the hideout.
 @export var allow_weapons := false
@@ -172,7 +172,7 @@ func deploy() -> Error:
 		return ERR_BUSY
 	close_stash()
 	if ui == null or not ui.has_method(&"deploy"):
-		flash("출격할 수 없습니다: 창고 화면이 없습니다")
+		flash("{{ui:cant_deploy_no_screen}}")
 		return ERR_UNCONFIGURED
 	var scene := str(ui.get_raid_scene()) if ui.has_method(&"get_raid_scene") else ""
 	is_deploying = true
@@ -180,10 +180,10 @@ func deploy() -> Error:
 	var err: Error = ui.deploy()
 	if err != OK:
 		is_deploying = false
-		flash("출격할 수 없습니다: 레이드 씬이 없습니다 (%s)" % scene)
+		flash("{{ui:cant_deploy_no_scene}}" % scene)
 		return err
 	_freeze_player(true)
-	_show_banner("출격!  %s" % scene.get_file().get_basename(), Color(1.0, 0.8, 0.4), 10.0)
+	_show_banner("{{ui:deploy}}!  %s" % scene.get_file().get_basename(), Color(1.0, 0.8, 0.4), 10.0)
 	return OK
 
 
@@ -217,7 +217,7 @@ func _disarm(body: Node) -> void:
 
 # --- screen tweaks -------------------------------------------------------------
 
-## The menu hideout's 출격 button becomes a 닫기 button: the door deploys.
+## The menu hideout's Deploy button becomes a Close button: the door deploys.
 func _adapt_ui() -> void:
 	var deploy_button := ui.get("_deploy_button") as Button
 	if deploy_button == null or not hide_menu_deploy_button:
@@ -225,7 +225,7 @@ func _adapt_ui() -> void:
 	deploy_button.visible = false
 	var close := Button.new()
 	close.name = "CloseButton"
-	close.text = "닫기  (%s / Esc)" % key_label(interact_action)
+	close.text = "{{ui:close}}  (%s / Esc)" % key_label(interact_action)
 	close.focus_mode = Control.FOCUS_NONE
 	close.custom_minimum_size = deploy_button.custom_minimum_size
 	close.add_theme_font_size_override("font_size", 22)
@@ -234,7 +234,7 @@ func _adapt_ui() -> void:
 	parent.add_child(close)
 	parent.move_child(close, deploy_button.get_index())
 	var note := Label.new()
-	note.text = "출격은 은신처의 출격 문 앞에 서 있으면 됩니다"
+	note.text = "{{ui:door_note}}"
 	note.add_theme_color_override("font_color", Color(0.7, 0.72, 0.76))
 	parent.add_child(note)
 	parent.move_child(note, close.get_index())
@@ -287,12 +287,12 @@ func _refresh_info() -> void:
 		for e in bag.entries:
 			count += int(e.count)
 		var limit := float(bag.max_weight)
-		lines.append("창고 ₩%s · 출격 가방 %d개 ₩%s · %.1f%s" % [
+		lines.append("{{ui:stash}} {{money}} · {{ui:raid_bag}} {{ui:item_count}} {{money}} · %.1f%s" % [
 			_thousands(int(stash.get_total_value())), count, _thousands(int(bag.get_total_value())),
 			float(bag.get_total_weight()), " / %.0f kg" % limit if limit > 0.0 else " kg"])
 	if state != null and state.get("stats") is Dictionary:
 		var s: Dictionary = state.stats
-		lines.append("레이드 %d · 탈출 %d · 사망 %d" % [int(s.get("raids", 0)), int(s.get("extracted", 0)), int(s.get("died", 0)) + int(s.get("mia", 0))])
+		lines.append("{{ui:stats_short}}" % [int(s.get("raids", 0)), int(s.get("extracted", 0)), int(s.get("died", 0)) + int(s.get("mia", 0))])
 	_info.text = "\n".join(lines)
 
 
@@ -305,12 +305,12 @@ func _refresh_prompt() -> void:
 	else:
 		for door in get_tree().get_nodes_in_group(&"hideout_door"):
 			if door.has_method(&"time_left") and float(door.time_left()) >= 0.0:
-				text = "출격까지 %.1f초 · 문에서 벗어나면 취소" % float(door.time_left())
+				text = "{{ui:deploy_countdown}}" % float(door.time_left())
 				break
 		if text.is_empty():
 			var locker := nearest_locker()
 			if locker != null:
-				text = "[%s] %s 열기" % [key_label(interact_action), str(locker.get("locker_name"))]
+				text = "{{ui:open_prompt}}" % [key_label(interact_action), str(locker.get("locker_name"))]
 	_prompt.text = text
 	_prompt.visible = not text.is_empty()
 

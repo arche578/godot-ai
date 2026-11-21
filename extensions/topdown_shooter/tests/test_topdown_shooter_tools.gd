@@ -27,6 +27,8 @@ const GenProviders := preload("res://addons/topdown_shooter_tools/handlers/gen_p
 const IconTools := preload("res://addons/topdown_shooter_tools/handlers/icon_tools.gd")
 const EnvTools := preload("res://addons/topdown_shooter_tools/handlers/env_tools.gd")
 const KitTools := preload("res://addons/topdown_shooter_tools/handlers/kit_tools.gd")
+const Util := preload("res://addons/topdown_shooter_tools/handlers/scaffold_util.gd")
+const UiText := preload("res://addons/topdown_shooter_tools/handlers/ui_text.gd")
 
 const WORK_DIR := "res://zz_mcp_test_topdown"
 const ACTION_PREFIX := "mcp_test_td_"
@@ -1210,7 +1212,7 @@ func _install_template(name: String) -> String:
 	var path := WORK_DIR + "/scripts/%s.gd" % name
 	if not FileAccess.file_exists(path):
 		var f := FileAccess.open(path, FileAccess.WRITE)
-		f.store_string(FileAccess.get_file_as_string("res://addons/topdown_shooter_tools/templates/%s.gd.tmpl" % name))
+		f.store_string(Util.template_source("%s.gd.tmpl" % name))
 		f.close()
 	return path
 
@@ -1237,7 +1239,7 @@ func _install_item_template() -> String:
 	if not FileAccess.file_exists(path):
 		DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(WORK_DIR + "/scripts"))
 		var f := FileAccess.open(path, FileAccess.WRITE)
-		f.store_string(FileAccess.get_file_as_string("res://addons/topdown_shooter_tools/templates/item_data.gd.tmpl"))
+		f.store_string(Util.template_source("item_data.gd.tmpl"))
 		f.close()
 	return path
 
@@ -2394,7 +2396,7 @@ func test_hideout_map_locker_door_and_disarm() -> void:
 
 	ui.get("stash").add_item("bandage", 2)
 	map._refresh_info()
-	assert_contains(map.get("_info").text, "창고 ₩100")
+	assert_contains(map.get("_info").text, "Stash 100")
 
 	assert_eq(door.get_map(), map)
 	assert_eq(door.time_left(), -1.0, "nobody on the pad")
@@ -2498,12 +2500,12 @@ func test_notes_categories_default_and_project_setting() -> void:
 	assert_eq(ids.size(), 12)
 	for id in ["bug", "balance", "level", "graphics", "art_style", "ui", "character", "vfx", "sound", "experience", "idea", "other"]:
 		assert_true(ids.has(id), "default category %s" % id)
-	assert_eq(script.DEFAULT_CATEGORIES, NotesTools.DEFAULT_CATEGORIES, "game and editor defaults match")
+	assert_eq(script.DEFAULT_CATEGORIES, NotesTools.default_categories(), "game and editor defaults match")
 	var labels: Array = []
 	for c in script.categories():
 		labels.append(c.label)
-	assert_true(labels.has("스타일(아트 컨셉)"))
-	assert_true(labels.has("게임 경험"))
+	assert_true(labels.has("Style (art direction)"))
+	assert_true(labels.has("Game feel"))
 	assert_eq(NotesTools.category_color("bug"), Color(0.95, 0.25, 0.2))
 	assert_eq(NotesTools.category_color("no_such"), NotesTools.FALLBACK_COLOR, "old or removed ids still get a pin")
 	ProjectSettings.set_setting(key, [
@@ -3288,7 +3290,7 @@ func test_swap_item_patches_old_scripts_and_pickup_shows_model() -> void:
 	assert_false(old_item.contains("var model"), "simulated old item_data.gd")
 	_write(item_script, old_item)
 	var pickup_path := _install_template("loot_pickup")
-	var tmpl := FileAccess.get_file_as_string("res://addons/topdown_shooter_tools/templates/loot_pickup.gd.tmpl")
+	var tmpl := Util.template_source("loot_pickup.gd.tmpl")
 	var old_pickup := tmpl.substr(0, tmpl.find(SwapTools.PICKUP_MODEL_MARKER)).replace("\t\t_apply_model()\n", "").rstrip("\n") + "\n"
 	_write(pickup_path, old_pickup)
 	var model := _save_model(_box_model(Vector3(0.05, 0.02, 0.05), Vector3(0, 0.01, 0)), MODEL_DIR + "/watch.tscn")
@@ -3349,7 +3351,7 @@ func _icon_params(extra: Dictionary = {}) -> Dictionary:
 ## A UI script as an older project copy has it: the template without the
 ## icon block.
 func _old_ui_copy(template: String, dest: String) -> String:
-	var tmpl := FileAccess.get_file_as_string("res://addons/topdown_shooter_tools/templates/" + template)
+	var tmpl := Util.template_source(template)
 	var a := tmpl.find(IconTools.UI_MARKER_BEGIN)
 	var b := tmpl.find(IconTools.UI_MARKER_END)
 	assert_true(a > 0 and b > a, "%s has the icon block" % template)
@@ -3468,7 +3470,7 @@ func test_icon_plan_dry_run_and_apply() -> void:
 	## A second run does not patch the UI again.
 	assert_eq(IconTools.plan_ui_patches(WORK_DIR + "/scripts"), [])
 	## Hand-edited copies are reported, not patched.
-	assert_true(String(IconTools.patch_ui_source("func x():\n\tpass\n", FileAccess.get_file_as_string("res://addons/topdown_shooter_tools/templates/inventory_ui.gd.tmpl"), IconTools.UI_PATCHES[0].anchor)).begins_with("!"))
+	assert_true(String(IconTools.patch_ui_source("func x():\n\tpass\n", Util.template_source("inventory_ui.gd.tmpl"), IconTools.UI_PATCHES[0].anchor)).begins_with("!"))
 
 	assert_true(_global_ur().undo(), "undo runs")
 	assert_false(FileAccess.file_exists(ICON_DIR + "/gold_watch.png"), "undo removes the PNG")
@@ -3490,7 +3492,7 @@ func test_gen_inspection_flags_cleanup_warnings() -> void:
 func test_icon_ui_templates_draw_icons() -> void:
 	## The inventory grid draws an entry's icon (turned with the stack).
 	for name in ["inventory_ui", "hideout"]:
-		var src := FileAccess.get_file_as_string("res://addons/topdown_shooter_tools/templates/%s.gd.tmpl" % name)
+		var src := Util.template_source("%s.gd.tmpl" % name)
 		assert_eq(src.count(IconTools.UI_MARKER_BEGIN), 1, name)
 		assert_true(src.contains("draw_texture_rect(icon"), name)
 
@@ -4667,3 +4669,84 @@ func test_asset_audit_reports_placeholders_items_and_characters() -> void:
 	assert_eq(over.over[0].kind, "item")
 	assert_eq(AuditTools._kind_of(WORK_DIR + "/audit_assets/items/big/big.glb", WORK_DIR + "/audit_assets"), "item")
 	assert_eq(AuditTools._kind_of(WORK_DIR + "/audit_assets/env/wall.glb", WORK_DIR + "/audit_assets"), "prop")
+
+
+# --- ui text (ui_text.gd) ------------------------------------------------------
+
+func _ui(raw: Dictionary) -> Dictionary:
+	var base := {"locale": UiText.DEFAULT_LOCALE, "money_format": UiText.DEFAULT_MONEY_FORMAT, "text": {}, "rarity_colors": UiText.RARITY_COLORS.duplicate(), "warnings": []}
+	return UiText.apply(base, raw)
+
+
+func test_ui_text_templates_use_only_known_tokens() -> void:
+	var dir := DirAccess.open(Util.TEMPLATE_DIR)
+	for file in dir.get_files():
+		if not file.ends_with(".tmpl"):
+			continue
+		var raw := FileAccess.get_file_as_string(Util.TEMPLATE_DIR + file)
+		for token in UiText.tokens(raw):
+			if token.begins_with("ui:"):
+				assert_true(UiText.TEXT.en.has(token.substr(3)), "%s: unknown key %s" % [file, token])
+			elif token.begins_with("rarity_color:"):
+				assert_true(UiText.RARITY_COLORS.has(token.substr(13)), "%s: unknown rarity %s" % [file, token])
+		for ui in [_ui({}), _ui({"locale": "ko", "money_format": "₩%s"})]:
+			var out := UiText.render(raw, ui)
+			assert_false(out.contains("{{"), "%s fully rendered" % file)
+			if file.ends_with(".gd.tmpl"):
+				var script := GDScript.new()
+				script.source_code = out if out.contains("@tool") else "@tool\n" + out
+				assert_eq(script.reload(), OK, "%s compiles in %s" % [file, ui.locale])
+
+
+func test_ui_text_locales_have_the_same_keys_and_format_specs() -> void:
+	assert_eq(UiText.TEXT.ko.keys().size(), UiText.TEXT.en.keys().size())
+	for key in UiText.TEXT.en:
+		assert_true(UiText.TEXT.ko.has(key), "ko has %s" % key)
+		assert_eq(UiText._specs(UiText.TEXT.ko.get(key, "")), UiText._specs(UiText.TEXT.en[key]), "format specs of %s" % key)
+	for key in UiText.TEXT.en:
+		assert_false(String(UiText.TEXT.en[key]).contains("₩"), "no currency sign in the English default %s" % key)
+
+
+func test_ui_text_defaults_are_english_without_currency() -> void:
+	var ui := _ui({})
+	assert_eq(UiText.text("stash", ui), "Stash")
+	assert_eq(UiText.text("died_report", ui), "Died · lost %s of gear")
+	var hideout := UiText.render(FileAccess.get_file_as_string(Util.TEMPLATE_DIR + "hideout.gd.tmpl"), ui)
+	assert_true(hideout.contains("\"Stash  %s\""), "stash label")
+	assert_false(hideout.contains("₩"))
+
+
+func test_ui_text_game_preset_picks_korean_and_won() -> void:
+	var ui := _ui({"locale": "KO", "money_format": "₩%s", "text": {"deploy": "출발"}, "rarity_colors": {"rare": "#3080ff"}})
+	assert_eq(ui.warnings, [])
+	assert_eq(UiText.text("stash", ui), "창고")
+	assert_eq(UiText.text("deploy", ui), "출발", "single key override")
+	assert_eq(UiText.text("extract_report", ui), "탈출 성공 · 가져온 물건 ₩%s · %d개를 창고로 옮겼습니다")
+	var hideout := UiText.render(FileAccess.get_file_as_string(Util.TEMPLATE_DIR + "hideout.gd.tmpl"), ui)
+	assert_true(hideout.contains("\"창고  ₩%s\""))
+	assert_true(hideout.contains("\"출발  ▶  %s\""))
+	assert_true(hideout.contains("Color(\"#3080ff\")"))
+	assert_eq(UiText.rarity_color("rare", ui), Color.html("#3080ff"))
+
+
+func test_ui_text_bad_preset_values_fall_back_with_warnings() -> void:
+	var ui := _ui({"locale": "fr", "money_format": "₩", "text": {"inv_hud": "bag", "nope": "x"}, "rarity_colors": {"mythic": "#fff", "rare": "blue-ish"}})
+	assert_eq(ui.locale, "en")
+	assert_eq(ui.money_format, "%s")
+	assert_eq(ui.text, {})
+	assert_eq(ui.rarity_colors, UiText.RARITY_COLORS)
+	assert_eq(ui.warnings.size(), 6, str(ui.warnings))
+
+
+func test_rarity_colors_come_from_one_place() -> void:
+	var ui := _ui({"rarity_colors": {"epic": "#112233"}})
+	var maps: Array = []
+	for name in ["inventory_ui", "hideout", "loot_pickup"]:
+		var script := GDScript.new()
+		script.source_code = "@tool\n" + UiText.render(FileAccess.get_file_as_string(Util.TEMPLATE_DIR + name + ".gd.tmpl"), ui)
+		assert_eq(script.reload(), OK, name)
+		maps.append(script.get_script_constant_map().RARITY_COLORS)
+	assert_eq(maps[0], maps[1])
+	assert_eq(maps[0], maps[2])
+	assert_eq(maps[0].epic, Color.html("#112233"))
+	assert_eq(maps[0].common, Color.html(UiText.RARITY_COLORS.common))

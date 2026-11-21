@@ -25,21 +25,23 @@ const OPS := ["list", "get", "resolve", "reopen", "delete", "markers", "clear_ma
 const STATUSES := ["open", "resolved", "all"]
 ## Same categories as playtest_notes_overlay.gd.tmpl (kept in sync by a test), in order: [id, label, color].
 ## Override them in Project Settings with playtest_notes/categories, an Array
-## of {"id": "bug", "label": "버그", "color": "#f24033"} (color optional).
+## of {"id": "bug", "label": "Bug", "color": "#f24033"} (color optional).
 const CATEGORIES_SETTING := "playtest_notes/categories"
+## Labels are the English defaults; default_categories() gives them in the
+## game's ui.locale (ui_text.gd), as the copied overlay holds them.
 const DEFAULT_CATEGORIES := [
-	["bug", "버그", Color(0.95, 0.25, 0.2)],
-	["balance", "밸런스", Color(0.95, 0.7, 0.15)],
-	["level", "레벨/맵", Color(0.3, 0.7, 1.0)],
-	["graphics", "그래픽", Color(0.55, 0.5, 1.0)],
-	["art_style", "스타일(아트 컨셉)", Color(0.95, 0.45, 0.75)],
+	["bug", "Bug", Color(0.95, 0.25, 0.2)],
+	["balance", "Balance", Color(0.95, 0.7, 0.15)],
+	["level", "Level/map", Color(0.3, 0.7, 1.0)],
+	["graphics", "Graphics", Color(0.55, 0.5, 1.0)],
+	["art_style", "Style (art direction)", Color(0.95, 0.45, 0.75)],
 	["ui", "UI", Color(0.2, 0.85, 0.8)],
-	["character", "캐릭터", Color(0.95, 0.5, 0.25)],
-	["vfx", "특수효과", Color(0.8, 0.95, 0.3)],
-	["sound", "사운드", Color(0.7, 0.4, 0.25)],
-	["experience", "게임 경험", Color(0.3, 0.55, 0.35)],
-	["idea", "아이디어", Color(0.45, 0.85, 0.4)],
-	["other", "기타", Color(0.8, 0.8, 0.8)],
+	["character", "Character", Color(0.95, 0.5, 0.25)],
+	["vfx", "VFX", Color(0.8, 0.95, 0.3)],
+	["sound", "Sound", Color(0.7, 0.4, 0.25)],
+	["experience", "Game feel", Color(0.3, 0.55, 0.35)],
+	["idea", "Idea", Color(0.45, 0.85, 0.4)],
+	["other", "Other", Color(0.8, 0.8, 0.8)],
 ]
 const FALLBACK_COLOR := Color(0.8, 0.8, 0.8)
 ## Folder the notes live in (tests point it elsewhere).
@@ -240,8 +242,17 @@ static func categories() -> Array:
 			var label := str(entry.get("label", "")).strip_edges()
 			out.append({"id": id, "label": label if not label.is_empty() else id, "color": parse_color(entry.get("color", null))})
 	if out.is_empty():
-		for c in DEFAULT_CATEGORIES:
+		for c in default_categories():
 			out.append({"id": c[0], "label": c[1], "color": c[2]})
+	return out
+
+
+## DEFAULT_CATEGORIES with labels in the game's ui.locale.
+static func default_categories() -> Array:
+	var ui := Util.UiText.settings()
+	var out: Array = []
+	for c in DEFAULT_CATEGORIES:
+		out.append([c[0], Util.UiText.text("note_" + c[0], ui), c[2]])
 	return out
 
 

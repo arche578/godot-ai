@@ -687,7 +687,7 @@ func _swap_item(p: Dictionary) -> Dictionary:
 	if FileAccess.file_exists(pickup_path) and not p.revert:
 		var src := FileAccess.get_file_as_string(pickup_path)
 		if not src.contains("func _apply_model("):
-			var template := FileAccess.get_file_as_string(Util.TEMPLATE_DIR + "loot_pickup.gd.tmpl")
+			var template := Util.template_source("loot_pickup.gd.tmpl")
 			var at := template.find(PICKUP_MODEL_MARKER)
 			var call_from := "\tif get_child_count() == 0:\n\t\t_build()\n"
 			if at < 0 or not src.contains(call_from):

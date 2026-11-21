@@ -22,24 +22,26 @@ signal opened
 signal closed
 
 const RARITY_COLORS := {
-	"common": Color(0.62, 0.62, 0.62),
-	"uncommon": Color(0.3, 0.75, 0.3),
-	"rare": Color(0.3, 0.5, 0.95),
-	"epic": Color(0.65, 0.3, 0.95),
-	"legendary": Color(0.95, 0.6, 0.1),
+	"common": Color("{{rarity_color:common}}"),
+	"uncommon": Color("{{rarity_color:uncommon}}"),
+	"rare": Color("{{rarity_color:rare}}"),
+	"epic": Color("{{rarity_color:epic}}"),
+	"legendary": Color("{{rarity_color:legendary}}"),
 }
 const CATEGORY_NAMES := {
-	"weapon": "무기", "ammo": "탄약", "armor": "방어구", "helmet": "헬멧",
-	"backpack": "가방", "medical": "의료", "food": "음식", "key": "열쇠",
-	"valuable": "귀중품", "material": "재료", "misc": "기타",
+	"weapon": "{{ui:cat_weapon}}", "ammo": "{{ui:cat_ammo}}", "armor": "{{ui:cat_armor}}",
+	"helmet": "{{ui:cat_helmet}}", "backpack": "{{ui:cat_backpack}}", "medical": "{{ui:cat_medical}}",
+	"food": "{{ui:cat_food}}", "key": "{{ui:cat_key}}", "valuable": "{{ui:cat_valuable}}",
+	"material": "{{ui:cat_material}}", "misc": "{{ui:cat_misc}}",
 }
 const RARITY_NAMES := {
-	"common": "일반", "uncommon": "고급", "rare": "희귀", "epic": "영웅", "legendary": "전설",
+	"common": "{{ui:rarity_common}}", "uncommon": "{{ui:rarity_uncommon}}", "rare": "{{ui:rarity_rare}}",
+	"epic": "{{ui:rarity_epic}}", "legendary": "{{ui:rarity_legendary}}",
 }
 
 @export var inventory_path: NodePath
 @export var toggle_action: StringName = &"inventory"
-@export var title := "인벤토리"
+@export var title := "{{ui:inventory_title}}"
 @export_range(24, 128) var cell_size := 56
 @export var block_owner_while_open := true
 @export var show_hud := true
@@ -192,12 +194,12 @@ func _build() -> void:
 	footer.add_theme_constant_override("separation", 8)
 	column.add_child(footer)
 	var hint := Label.new()
-	hint.text = "드래그: 이동 · R: 회전 · 우클릭: 버리기 · Shift+클릭: 나누기"
+	hint.text = "{{ui:inv_hint}}"
 	hint.add_theme_font_size_override("font_size", 12)
 	hint.add_theme_color_override("font_color", Color(0.65, 0.67, 0.7))
 	hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	footer.add_child(hint)
-	for spec in [["정렬", _on_sort], ["닫기", func(): set_open(false)]]:
+	for spec in [["{{ui:sort}}", _on_sort], ["{{ui:close}}", func(): set_open(false)]]:
 		var button := Button.new()
 		button.text = spec[0]
 		button.focus_mode = Control.FOCUS_NONE
@@ -249,25 +251,25 @@ func _refresh() -> void:
 		return
 	var weight: float = inventory.get_total_weight()
 	var limit: float = inventory.max_weight
-	var text := "무게 %.1f" % weight + (" / %.0f kg" % limit if limit > 0.0 else " kg")
+	var text := "{{ui:weight}} %.1f" % weight + (" / %.0f kg" % limit if limit > 0.0 else " kg")
 	var factor: float = inventory.get_speed_factor()
 	if factor < 0.999:
-		text += "  (속도 %d%%)" % roundi(factor * 100.0)
+		text += "{{ui:inv_speed}}" % roundi(factor * 100.0)
 	_weight_label.text = text
 	var heavy: bool = factor < 0.999 or (limit > 0.0 and weight >= limit * 0.95)
 	_weight_label.add_theme_color_override("font_color", Color(1.0, 0.55, 0.45) if heavy else Color(0.85, 0.88, 0.9))
-	_value_label.text = "가치 ₩%s" % _thousands(inventory.get_total_value())
-	_hud.text = "가방 %.1f%s  [%s]" % [weight, "/%.0fkg" % limit if limit > 0.0 else "kg", _toggle_key_name()]
+	_value_label.text = "{{ui:value}} {{money}}" % _thousands(inventory.get_total_value())
+	_hud.text = "{{ui:inv_hud}}" % [weight, "/%.0fkg" % limit if limit > 0.0 else "kg", _toggle_key_name()]
 	_grid.refresh()
 
 
 func _on_sort() -> void:
 	if not inventory.sort_items():
-		_toast("정렬할 공간이 없습니다", Color(1.0, 0.6, 0.5))
+		_toast("{{ui:no_room_to_sort}}", Color(1.0, 0.6, 0.5))
 
 
 func _on_add_failed(item: Resource, count: int, reason: String) -> void:
-	var why: String = {"weight": "너무 무겁습니다", "space": "가방에 공간이 없습니다"}.get(reason, "알 수 없는 아이템")
+	var why: String = {"weight": "{{ui:too_heavy}}", "space": "{{ui:bag_no_room}}"}.get(reason, "{{ui:unknown_item}}")
 	_toast("%s: %s" % [_label_for(item, count) if item != null else "?", why], Color(1.0, 0.55, 0.45))
 
 
@@ -298,10 +300,10 @@ func show_tooltip(index: int, at: Vector2) -> void:
 	var category := String(item.get("category")) if "category" in item else ""
 	var rarity := String(item.get("rarity")) if "rarity" in item else ""
 	lines.append("%s · %s" % [CATEGORY_NAMES.get(category, category), RARITY_NAMES.get(rarity, rarity)])
-	lines.append("무게 %.2f kg (개당 %.2f)" % [inventory.weight_of(item, e.count), inventory.weight_of(item)])
-	lines.append("가치 ₩%s (개당 ₩%s)" % [_thousands(inventory.value_of(item, e.count)), _thousands(inventory.value_of(item))])
+	lines.append("{{ui:tip_weight_each}}" % [inventory.weight_of(item, e.count), inventory.weight_of(item)])
+	lines.append("{{ui:value}} {{money}} ({{ui:each}} {{money}})" % [_thousands(inventory.value_of(item, e.count)), _thousands(inventory.value_of(item))])
 	var size: Vector2i = inventory.item_size(item)
-	lines.append("크기 %dx%d · 최대 %d개" % [size.x, size.y, inventory.max_stack_of(item)])
+	lines.append("{{ui:tip_size}}" % [size.x, size.y, inventory.max_stack_of(item)])
 	if "description" in item and String(item.get("description")) != "":
 		lines.append(String(item.get("description")))
 	_tooltip_label.text = "\n".join(lines)
