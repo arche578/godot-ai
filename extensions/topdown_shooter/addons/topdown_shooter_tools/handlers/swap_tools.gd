@@ -77,7 +77,22 @@ func swap_placeholder(params: Dictionary, _ctx = null) -> Dictionary:
 			return plan
 		return _apply_live(edited, p, plan)
 	if Engine.is_editor_hint() and scene_path in EditorInterface.get_open_scenes():
-		return Util.error(Util.EDITOR_NOT_READY, "%s is open in another editor tab; switch to that tab (then it is edited live) or close it" % scene_path)
+		## Writing the file under an open tab would be overwritten by that
+		## tab's next save; edit the tab itself instead (dry runs only read).
+		if p.dry_run:
+			return _apply_file(scene_path, p)
+		var previous := edited.scene_file_path if edited != null else ""
+		EditorInterface.open_scene_from_path(scene_path)
+		var tab := Util.edited_root()
+		if tab == null or tab.scene_file_path != scene_path:
+			return Util.error(Util.EDITOR_NOT_READY, "%s is open in another editor tab and switching to it failed; switch to that tab or close it" % scene_path)
+		var tab_plan: Variant = _plan(tab, p)
+		if Util.is_error(tab_plan):
+			return tab_plan
+		var result := _apply_live(tab, p, tab_plan)
+		if result.has("data") and not previous.is_empty():
+			result.data["switched_from"] = previous
+		return result
 	return _apply_file(scene_path, p)
 
 
