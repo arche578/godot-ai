@@ -27,7 +27,7 @@
 
 | 도구 | 하는 일 |
 |---|---|
-| `topdown_camera_setup` | 열린 3D 씬에 탑뷰 추적 카메라 리그(Node3D + Camera3D)를 추가. 대상(기본: `player` 그룹의 첫 노드)을 따라가고, 마우스 방향으로 화면을 살짝 당겨 줌(선행 오프셋). 각도·거리·회전·부드러움을 인스펙터에서 바로 조정. 카메라와 대상 사이에 끼는 물체(벽·상자·적·충돌 없는 장식)는 자동으로 반투명해짐(`fade_occluders`, 빼려면 `no_occluder_fade` 그룹). 실행 취소 한 번으로 제거 |
+| `topdown_camera_setup` | 열린 3D 씬에 탑뷰 추적 카메라 리그(Node3D + Camera3D)를 추가. 대상(기본: `player` 그룹의 첫 노드)을 따라가고, 마우스 방향으로 화면을 살짝 당겨 줌(선행 오프셋). 각도·거리·회전·부드러움을 인스펙터에서 바로 조정. 카메라와 대상 사이에 끼는 물체(벽·상자·적·시체·아이템·탈출 표시기·충돌 없는 장식, 캐릭터를 일부만 가려도)는 자동으로 반투명해짐(`fade_occluders`, 빼려면 `no_occluder_fade` 그룹). 실행 취소 한 번으로 제거 |
 | `player_controller_scaffold` | 플레이어 씬 생성: CharacterBody3D, 캡슐 충돌·메시, 조준 피벗(`Aim`), 무기 장착점(`Aim/WeaponMount`). 카메라 기준 WASD 이동, 마우스 조준(바닥 평면 레이캐스트), 무적 구르기, 체력·`take_damage`, 발사·재장전 입력. 없는 입력 액션만 `project.godot`에 추가하고, 기본으로 열린 씬에 배치 |
 | `enemy_ai_scaffold` | 적 씬 생성: CharacterBody3D, 캡슐, `NavigationAgent3D`, `WeaponMount`. 상태 머신 AI(순찰 → 추격 → 공격 → 수색 → 순찰, 사망). 시야각 + 시선 레이로 감지하고, 맞으면 쏜 쪽을 쫓고, 주변 적에게 알림. 근접 공격 또는 원거리(자체 레이, 또는 `weapon_create` 무기 장착). 체력·`take_damage`. 열린 씬에 여러 마리 배치하고, 씬에 `NavigationRegion3D`가 없으면 정적 충돌체로 내비 메시를 구워 추가. 실행 취소 한 번으로 제거 |
 | `item_db_import` | 아이템 스프레드시트(CSV/TSV)를 행마다 아이템 `.tres` 하나로 바꾸고, 전체를 묶은 `item_database.tres`(`get_item(id)`, `find_by`, `find_by_tag`)를 만들거나 갱신. 모든 행을 먼저 검사해서 한 칸이라도 틀리면 아무것도 쓰지 않음. 다시 가져오면 기존 아이템을 제자리에서 갱신. 실행 취소 한 번으로 이전 파일로 복원 |

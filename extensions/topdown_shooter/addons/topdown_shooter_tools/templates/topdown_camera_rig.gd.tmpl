@@ -49,6 +49,10 @@ extends Node3D
 @export_flags_3d_physics var occluder_mask := 1
 ## Heights above the target's origin that must stay visible (feet to head).
 @export var occluder_probe_heights := PackedFloat32Array([0.4, 1.6])
+## Half the target's width as seen from the camera. Sight lines also go to
+## the target's left and right edges, so anything covering part of the
+## body fades too, not only what crosses its center. 0 checks the center only.
+@export_range(0.0, 5.0, 0.05) var occluder_probe_radius := 0.4
 
 var _lookahead := Vector3.ZERO
 ## Last cursor position seen in a mouse event (viewport coordinates). Using
@@ -127,10 +131,12 @@ func get_cursor_ground_point(plane_y: float) -> Variant:
 
 
 ## Geometry currently between the camera and `target` (what gets faded):
-## walls, crates, enemies, props without collision, anything that draws.
-## Things with collision are found by their real shape; meshes without one
-## by their bounding box (skipping boxes the target stands inside, such as
-## the floor). Nodes in group "no_occluder_fade" are never faded.
+## every visible thing that covers any part of the target. Bodies the
+## occluder_mask can hit are found by their real shape; everything else
+## (props without collision, areas such as pickups and extraction beacons,
+## corpses or bodies on other layers) by its bounding box, skipping boxes
+## the target stands inside such as the floor. Nodes in group
+## "no_occluder_fade" are never faded.
 func find_occluders(target: Node3D) -> Array[GeometryInstance3D]:
 	var found: Array[GeometryInstance3D] = []
 	var camera := get_camera()
@@ -140,8 +146,17 @@ func find_occluders(target: Node3D) -> Array[GeometryInstance3D]:
 	var space := world.direct_space_state
 	var from := camera.global_position
 	var heights := occluder_probe_heights if not occluder_probe_heights.is_empty() else PackedFloat32Array([1.0])
+	var side := camera.global_basis.x
+	side.y = 0.0
+	side = side.normalized() * occluder_probe_radius
+	var points: Array[Vector3] = []
 	for h in heights:
-		var to := target.global_position + Vector3.UP * h
+		var center := target.global_position + Vector3.UP * h
+		points.append(center)
+		if occluder_probe_radius > 0.0:
+			points.append(center - side)
+			points.append(center + side)
+	for to in points:
 		var exclude: Array[RID] = []
 		if target is CollisionObject3D:
 			exclude.append((target as CollisionObject3D).get_rid())
@@ -161,7 +176,7 @@ func find_occluders(target: Node3D) -> Array[GeometryInstance3D]:
 			var g := instance_from_id(id) as GeometryInstance3D
 			if g == null or found.has(g) or not g.is_visible_in_tree() or not _can_fade(g, target):
 				continue
-			if _has_collision(g):
+			if _has_collision(g, occluder_mask):
 				continue
 			var box := g.global_transform * g.get_aabb()
 			if box.grow(0.01).has_point(target.global_position) or box.has_point(to):
@@ -215,20 +230,27 @@ static func _can_fade(g: GeometryInstance3D, target: Node) -> bool:
 	return true
 
 
-## True when the mesh belongs to a physics body (that body's real shape
-## decides whether it blocks the view, not the mesh's bounding box).
-static func _has_collision(g: GeometryInstance3D) -> bool:
+## True when the mesh belongs to a physics body the view ray can hit (that
+## body's real shape then decides whether it blocks the view, not the
+## mesh's bounding box). Areas, and bodies with no layer in `mask` (such as
+## corpses with collision_layer 0), are invisible to the ray, so they fall
+## back to the bounding-box test instead of never fading.
+static func _has_collision(g: GeometryInstance3D, mask: int) -> bool:
 	if g is CSGShape3D and (g as CSGShape3D).use_collision:
-		return true
+		return (g as CSGShape3D).collision_layer & mask != 0
 	for child in g.get_children():
-		if child is CollisionObject3D:
+		if _ray_can_hit(child, mask):
 			return true
 	var node := g.get_parent()
 	while node != null and node is Node3D:
 		if node is CollisionObject3D:
-			return true
+			return _ray_can_hit(node, mask)
 		node = node.get_parent()
 	return false
+
+
+static func _ray_can_hit(node: Node, mask: int) -> bool:
+	return node is PhysicsBody3D and (node as CollisionObject3D).collision_layer & mask != 0
 
 
 ## The visible meshes that belong to a collider: the collider itself when it
