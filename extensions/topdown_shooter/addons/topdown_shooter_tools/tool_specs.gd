@@ -575,7 +575,7 @@ static func definitions() -> Array[Dictionary]:
 			"script": GEN_HANDLER_PATH,
 			"deferred": true,
 			"timeout_ms": 90000,
-			"description": "Start an AI 3D generation (Meshy or Tripo) and return the job at once; it takes minutes. Prompt = prompt + the kind's line + the shared style preset (res://assets/style_preset.json, created on first use with a neutral default; the game's own art style lives in that project file). One task per candidate (default 2); text jobs make untextured candidates and texture only the pick. Spends credits: run dry_run first and get the user's OK. Daily task limit (Editor Settings, default 20). API key: Editor Settings topdown_shooter/asset_generation/<provider>_api_key or MESHY_API_KEY/TRIPO_API_KEY; never ask for it in chat. Then asset_job / asset_pipeline.",
+			"description": "Start an AI 3D generation (Meshy or Tripo) and return the job at once; it takes minutes. Prompt = prompt + the kind's line + the game's style preset (res://assets/style_preset.json; neutral if new). One task per candidate (default 2); text jobs make untextured candidates and texture only the pick. Spends credits: run dry_run first and get the user's OK. Daily task limit (Editor Settings, default 20). API key: Editor Settings topdown_shooter/asset_generation/<provider>_api_key or MESHY_API_KEY/TRIPO_API_KEY; never ask for it in chat. Then asset_job / asset_pipeline.",
 			"schema": {
 				"type": "object",
 				"additionalProperties": false,
