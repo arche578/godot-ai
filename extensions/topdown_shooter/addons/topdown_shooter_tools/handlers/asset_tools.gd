@@ -865,6 +865,7 @@ func render_node(model: Node3D, png_path: String, stop: int) -> Variant:
 	vp.own_world_3d = true
 	vp.transparent_bg = true
 	vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	vp.msaa_3d = Viewport.MSAA_4X
 	EditorInterface.get_base_control().add_child(vp)
 	vp.add_child(model)
 	var stats := measure(model)
@@ -897,6 +898,10 @@ func render_node(model: Node3D, png_path: String, stop: int) -> Variant:
 	sky_mat.ground_horizon_color = Color(0.6, 0.62, 0.62)
 	var sky := Sky.new()
 	sky.sky_material = sky_mat
+	## The default (automatic) mode spreads the reflection map over many
+	## frames; the render waits only a few, so compute it in one go.
+	sky.process_mode = Sky.PROCESS_MODE_QUALITY
+	sky.radiance_size = Sky.RADIANCE_SIZE_128
 	e.sky = sky
 	e.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
 	env.environment = e
