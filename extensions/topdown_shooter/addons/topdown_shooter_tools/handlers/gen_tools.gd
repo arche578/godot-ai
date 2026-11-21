@@ -1452,12 +1452,29 @@ func _swap_and_inspect(job: Dictionary, swap: Dictionary, config: Dictionary, de
 		out["swap"] = result.error
 		return out
 	out["swap"] = result.data
+	_save_live_swap(params, result.data, _inspect_target(params))
 	log_step(job, "swap", {"target": params.target})
 	if config.inspect:
 		if inspect_scene != "none":
 			shots["after"] = await _shot(inspect_scene, AssetTools.work_dir(job.asset_id) + "/inspect_after.png", deadline)
 		out["inspection"] = inspection(job, result.data, shots)
 	return out
+
+
+## swap_placeholder edits a player/enemy/weapon scene in place when it is
+## the scene open in the editor, and leaves it unsaved. The pipeline's
+## "after" render and the game both read the file, so save it. Map and node
+## swaps stay unsaved: that scene may hold other unsaved work of the user's.
+func _save_live_swap(params: Dictionary, data: Dictionary, scene: String) -> void:
+	if not Engine.is_editor_hint() or not String(data.get("edited", "")).begins_with("open scene"):
+		return
+	if not String(params.target) in ["player", "enemy", "weapon"] or scene.is_empty():
+		return
+	var root := EditorInterface.get_edited_scene_root()
+	if root == null or root.scene_file_path != scene:
+		return
+	var err := EditorInterface.save_scene()
+	data["edited"] = "open scene, saved" if err == OK else "open scene (save failed: %s; save with Ctrl+S)" % error_string(err)
 
 
 ## The "before" render is taken ahead of the import: when the scene already
