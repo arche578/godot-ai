@@ -8,6 +8,10 @@ extends Node3D
 ## by `pitch_degrees` and `distance`, and `yaw_degrees` turns the whole rig.
 ## The rig is top_level, so it ignores its parent's transform.
 ##
+## Anything between the camera and the target (walls, crates, enemies,
+## props) fades to see-through (fade_occluders), so the player never
+## disappears behind it. Put a node in group "no_occluder_fade" to opt out.
+##
 ## Free to edit: this file was copied into your project and is yours now.
 
 @export var target_path: NodePath:
@@ -34,12 +38,30 @@ extends Node3D
 @export_range(0.0, 50.0, 0.1) var max_lookahead := 4.0
 ## How fast the lean follows the cursor. 0 snaps every frame.
 @export_range(0.0, 50.0, 0.1) var lookahead_smoothing := 6.0
+@export_group("Occluder fade")
+## Fade geometry that hides the target from the camera.
+@export var fade_occluders := true
+## How see-through a hiding wall gets: 0 opaque, 1 invisible.
+@export_range(0.0, 1.0, 0.01) var occluder_transparency := 0.75
+## How fast walls fade out and back in. 0 snaps.
+@export_range(0.0, 50.0, 0.1) var occluder_fade_speed := 12.0
+## Physics layers checked for hiding geometry.
+@export_flags_3d_physics var occluder_mask := 1
+## Heights above the target's origin that must stay visible (feet to head).
+@export var occluder_probe_heights := PackedFloat32Array([0.4, 1.6])
+## Half the target's width as seen from the camera. Sight lines also go to
+## the target's left and right edges, so anything covering part of the
+## body fades too, not only what crosses its center. 0 checks the center only.
+@export_range(0.0, 5.0, 0.05) var occluder_probe_radius := 0.4
 
 var _lookahead := Vector3.ZERO
 ## Last cursor position seen in a mouse event (viewport coordinates). Using
 ## events instead of only the OS cursor lets synthetic input (tests, MCP
 ## game_manage input_mouse) steer the camera too.
 var _cursor: Variant = null
+## instance_id -> {"node": GeometryInstance3D, "base": float}. Geometry this
+## rig has faded, with its own transparency to return to.
+var _faded := {}
 
 
 func _ready() -> void:
@@ -48,6 +70,10 @@ func _ready() -> void:
 	snap_to_target()
 	set_physics_process(not Engine.is_editor_hint())
 	set_process_input(not Engine.is_editor_hint())
+
+
+func _exit_tree() -> void:
+	_restore_all_occluders()
 
 
 func _input(event: InputEvent) -> void:
@@ -69,6 +95,7 @@ func _physics_process(delta: float) -> void:
 	_lookahead = _lookahead.lerp(lean, _blend(lookahead_smoothing, delta))
 	var desired := target_pos + _lookahead
 	global_position = global_position.lerp(desired, _blend(follow_smoothing, delta))
+	_update_occluders(target, delta)
 
 
 ## The Camera3D on the rig's arm.
@@ -101,6 +128,144 @@ func get_cursor_ground_point(plane_y: float) -> Variant:
 	var origin := camera.project_ray_origin(mouse)
 	var normal := camera.project_ray_normal(mouse)
 	return Plane(Vector3.UP, plane_y).intersects_ray(origin, normal)
+
+
+## Geometry currently between the camera and `target` (what gets faded):
+## every visible thing that covers any part of the target. Bodies the
+## occluder_mask can hit are found by their real shape; everything else
+## (props without collision, areas such as pickups and extraction beacons,
+## corpses or bodies on other layers) by its bounding box, skipping boxes
+## the target stands inside such as the floor. Nodes in group
+## "no_occluder_fade" are never faded.
+func find_occluders(target: Node3D) -> Array[GeometryInstance3D]:
+	var found: Array[GeometryInstance3D] = []
+	var camera := get_camera()
+	if camera == null or target == null or not camera.is_inside_tree():
+		return found
+	var world := get_world_3d()
+	var space := world.direct_space_state
+	var from := camera.global_position
+	var heights := occluder_probe_heights if not occluder_probe_heights.is_empty() else PackedFloat32Array([1.0])
+	var side := camera.global_basis.x
+	side.y = 0.0
+	side = side.normalized() * occluder_probe_radius
+	var points: Array[Vector3] = []
+	for h in heights:
+		var center := target.global_position + Vector3.UP * h
+		points.append(center)
+		if occluder_probe_radius > 0.0:
+			points.append(center - side)
+			points.append(center + side)
+	for to in points:
+		var exclude: Array[RID] = []
+		if target is CollisionObject3D:
+			exclude.append((target as CollisionObject3D).get_rid())
+		for _i in 16:
+			var query := PhysicsRayQueryParameters3D.create(from, to, occluder_mask, exclude)
+			var hit := space.intersect_ray(query)
+			if hit.is_empty():
+				break
+			exclude.append(hit.rid)
+			var collider := hit.collider as Node
+			if collider == null or _is_target_part(collider, target):
+				continue
+			for g in _geometry_of(collider):
+				if not found.has(g) and _can_fade(g, target):
+					found.append(g)
+		for id in RenderingServer.instances_cull_ray(from, to, world.scenario):
+			var g := instance_from_id(id) as GeometryInstance3D
+			if g == null or found.has(g) or not g.is_visible_in_tree() or not _can_fade(g, target):
+				continue
+			if _has_collision(g, occluder_mask):
+				continue
+			var box := g.global_transform * g.get_aabb()
+			if box.grow(0.01).has_point(target.global_position) or box.has_point(to):
+				continue
+			found.append(g)
+	return found
+
+
+func _update_occluders(target: Node3D, delta: float) -> void:
+	var hiding: Array[GeometryInstance3D] = []
+	if fade_occluders:
+		hiding = find_occluders(target)
+	for g in hiding:
+		var id := g.get_instance_id()
+		if not _faded.has(id):
+			_faded[id] = {"node": g, "base": g.transparency}
+	var t := _blend(occluder_fade_speed, delta)
+	for id in _faded.keys():
+		var entry: Dictionary = _faded[id]
+		var g: GeometryInstance3D = entry.node if is_instance_valid(entry.node) else null
+		if g == null:
+			_faded.erase(id)
+			continue
+		var base: float = entry.base
+		var goal := maxf(base, occluder_transparency) if hiding.has(g) else base
+		g.transparency = lerpf(g.transparency, goal, t)
+		if goal == base and absf(g.transparency - base) < 0.01:
+			g.transparency = base
+			_faded.erase(id)
+
+
+func _restore_all_occluders() -> void:
+	for entry in _faded.values():
+		if is_instance_valid(entry.node):
+			(entry.node as GeometryInstance3D).transparency = entry.base
+	_faded.clear()
+
+
+static func _is_target_part(node: Node, target: Node) -> bool:
+	return node == target or target.is_ancestor_of(node) or node.is_ancestor_of(target)
+
+
+static func _can_fade(g: GeometryInstance3D, target: Node) -> bool:
+	if _is_target_part(g, target):
+		return false
+	var node: Node = g
+	while node != null:
+		if node.is_in_group(&"no_occluder_fade"):
+			return false
+		node = node.get_parent()
+	return true
+
+
+## True when the mesh belongs to a physics body the view ray can hit (that
+## body's real shape then decides whether it blocks the view, not the
+## mesh's bounding box). Areas, and bodies with no layer in `mask` (such as
+## corpses with collision_layer 0), are invisible to the ray, so they fall
+## back to the bounding-box test instead of never fading.
+static func _has_collision(g: GeometryInstance3D, mask: int) -> bool:
+	if g is CSGShape3D and (g as CSGShape3D).use_collision:
+		return (g as CSGShape3D).collision_layer & mask != 0
+	for child in g.get_children():
+		if _ray_can_hit(child, mask):
+			return true
+	var node := g.get_parent()
+	while node != null and node is Node3D:
+		if node is CollisionObject3D:
+			return _ray_can_hit(node, mask)
+		node = node.get_parent()
+	return false
+
+
+static func _ray_can_hit(node: Node, mask: int) -> bool:
+	return node is PhysicsBody3D and (node as CollisionObject3D).collision_layer & mask != 0
+
+
+## The visible meshes that belong to a collider: the collider itself when it
+## is geometry (CSG), its mesh children, or the mesh it was generated from
+## (a StaticBody3D child of a MeshInstance3D).
+static func _geometry_of(collider: Node) -> Array[GeometryInstance3D]:
+	var out: Array[GeometryInstance3D] = []
+	if collider is GeometryInstance3D:
+		out.append(collider)
+		return out
+	for child in collider.find_children("*", "GeometryInstance3D", true, false):
+		out.append(child)
+	if out.is_empty() and collider.get_parent() is GeometryInstance3D:
+		out.append(collider.get_parent())
+	return out
 
 
 func _apply_arm() -> void:

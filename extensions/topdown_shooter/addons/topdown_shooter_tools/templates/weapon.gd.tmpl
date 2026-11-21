@@ -8,6 +8,11 @@ extends Node3D
 ## Damage goes to the first node in the hit collider's ancestry that has
 ## take_damage(amount, info).
 ##
+## The muzzle usually sticks out in front of the shooter, so when the
+## shooter hugs a wall the muzzle is already on the far side of it. Every
+## shot therefore first checks the stretch from the shooter's body to the
+## muzzle; anything in that gap (a wall, a crate) takes the shot instead.
+##
 ## Free to edit: this file was copied into your project and is yours now.
 
 signal fired(ammo_left: int)
@@ -76,10 +81,15 @@ func try_fire(aim_point: Vector3) -> bool:
 			base_dir.y = 0.0
 	base_dir = base_dir.normalized()
 
+	var blocked := _muzzle_blocker(origin)
 	for _pellet in maxi(data.pellets, 1):
 		var half_spread := deg_to_rad(data.spread_degrees) * 0.5
 		var dir := base_dir.rotated(Vector3.UP, randf_range(-half_spread, half_spread))
-		if data.fire_mode == "projectile" and data.projectile_scene != null:
+		if not blocked.is_empty():
+			apply_hit(blocked.collider, blocked.position, dir)
+			if show_tracers:
+				_spawn_tracer(origin, blocked.position)
+		elif data.fire_mode == "projectile" and data.projectile_scene != null:
 			_spawn_projectile(origin, dir)
 		else:
 			_fire_ray(origin, dir)
@@ -100,9 +110,42 @@ func _fire_ray(origin: Vector3, dir: Vector3) -> void:
 	var space := get_world_3d().direct_space_state
 	var query := PhysicsRayQueryParameters3D.create(origin, origin + dir * data.max_range, data.collision_mask, _shooter_rids())
 	var result := space.intersect_ray(query)
+	if show_tracers:
+		var end: Vector3 = result.position if not result.is_empty() else origin + dir * data.max_range
+		_spawn_tracer(origin, end)
 	if result.is_empty():
 		return
 	apply_hit(result.collider, result.position, dir)
+
+
+## Hitscan rays are instant, so draw a short-lived streak to show the shot.
+@export var show_tracers := true
+@export var tracer_color := Color(1.0, 0.85, 0.4)
+@export var tracer_width := 0.08
+@export var tracer_lifetime := 0.1
+
+
+func _spawn_tracer(from: Vector3, to: Vector3) -> void:
+	var length := from.distance_to(to)
+	if length < 0.05:
+		return
+	var mesh := BoxMesh.new()
+	mesh.size = Vector3(tracer_width, tracer_width, length)
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.albedo_color = tracer_color
+	mesh.material = mat
+	var tracer := MeshInstance3D.new()
+	tracer.mesh = mesh
+	tracer.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var host := get_tree().current_scene if get_tree().current_scene != null else get_tree().root
+	host.add_child(tracer)
+	tracer.global_position = (from + to) * 0.5
+	tracer.look_at(to, Vector3.UP if absf((to - from).normalized().y) < 0.99 else Vector3.RIGHT)
+	var tween := tracer.create_tween()
+	tween.tween_property(mat, "albedo_color:a", 0.0, tracer_lifetime)
+	tween.tween_callback(tracer.queue_free)
 
 
 ## Delivers this weapon's damage to `collider` (or the first ancestor that
@@ -144,6 +187,19 @@ func _shooter_rids() -> Array[RID]:
 	if shooter != null:
 		rids.append(shooter.get_rid())
 	return rids
+
+
+## What sits between the shooter's body and the muzzle (the ray result of
+## intersect_ray), or {} when the muzzle is clear. The check starts at the
+## shooter's center, raised to the muzzle's height.
+func _muzzle_blocker(muzzle: Vector3) -> Dictionary:
+	var shooter := get_shooter() as Node3D
+	var start := shooter.global_position if shooter != null else global_position
+	start.y = muzzle.y
+	if start.distance_squared_to(muzzle) < 0.000001:
+		return {}
+	var query := PhysicsRayQueryParameters3D.create(start, muzzle, data.collision_mask, _shooter_rids())
+	return get_world_3d().direct_space_state.intersect_ray(query)
 
 
 func _muzzle_position() -> Vector3:
