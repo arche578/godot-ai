@@ -57,7 +57,7 @@ func inventory_ui_scaffold(params: Dictionary, _ctx = null) -> Dictionary:
 	for spec in [
 		["player_path", ""], ["database_path", DEFAULT_DATABASE], ["toggle_action", DEFAULT_ACTION],
 		["inventory_name", "Inventory"], ["ui_name", "InventoryUI"], ["script_dir", DEFAULT_SCRIPT_DIR],
-		["title", "인벤토리"],
+		["title", Util.UiText.text("inventory_title")],
 	]:
 		var v: Variant = Util.text(params, spec[0], spec[1])
 		if Util.is_error(v):

@@ -4,7 +4,7 @@ extends RefCounted
 ## Handler for hideout_scaffold: closes the raid loop.
 ##
 ## Writes a hideout scene (hideout.gd: a stash grid and a raid bag grid,
-## both inventory.gd nodes, plus a 출격 button) and registers the
+## both inventory.gd nodes, plus a Deploy button) and registers the
 ## HideoutState autoload (hideout_state.gd), which keeps the stash, the bag
 ## and the stats in a user:// JSON save and switches scenes:
 ## hideout -> raid (bag becomes the player's inventory) -> extracted (bag
@@ -337,7 +337,7 @@ static func read_params(params: Dictionary) -> Variant:
 		["raid_scene", "text", ""],
 		["hideout_scene", "text", DEFAULT_SCENE],
 		["save_path", "text", DEFAULT_SAVE],
-		["title", "text", "은신처"],
+		["title", "text", Util.UiText.text("hideout_title")],
 		["database_path", "text", DEFAULT_DATABASE],
 		["script_dir", "text", DEFAULT_SCRIPT_DIR],
 		["style", "text", "menu"],
@@ -568,7 +568,7 @@ static func build_map(p: Dictionary, menu: PackedScene, player_packed: PackedSce
 	pad.mesh = pad_mesh
 	pad.position = Vector3(0, 0.02, 0)
 	door.add_child(pad)
-	door.add_child(_label3d("출격", Vector3(0, 2.4, -0.4), Color(1.0, 0.8, 0.45)))
+	door.add_child(_label3d(Util.UiText.text("deploy"), Vector3(0, 2.4, -0.4), Color(1.0, 0.8, 0.45)))
 	_own(root, root, door)
 
 	## Stash locker against the left wall, facing the room.
@@ -601,7 +601,7 @@ static func build_map(p: Dictionary, menu: PackedScene, player_packed: PackedSce
 		stripe.mesh = stripe_mesh
 		stripe.position = Vector3(locker_size.x / 2.0 + 0.01, 1.05, -0.86 + 0.86 * i)
 		locker.add_child(stripe)
-	locker.add_child(_label3d("창고", Vector3(0.6, 2.7, 0), Color(0.75, 0.85, 1.0)))
+	locker.add_child(_label3d(Util.UiText.text("stash"), Vector3(0.6, 2.7, 0), Color(0.75, 0.85, 1.0)))
 	_own(root, root, locker)
 
 	## Furniture (static boxes; move or delete freely).

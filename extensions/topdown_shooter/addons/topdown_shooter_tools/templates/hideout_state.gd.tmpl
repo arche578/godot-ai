@@ -388,7 +388,7 @@ func _on_extracted(_body: Node = null) -> void:
 	in_raid = false
 	save_game()
 	raid_ended.emit("extracted", last_raid)
-	_show_overlay("탈출 성공!\n가져온 물건 ₩%s · %d개\n은신처로 돌아갑니다" % [_thousands(value), count], Color(0.5, 1.0, 0.6))
+	_show_overlay("{{ui:extract_overlay}}" % [_thousands(value), count], Color(0.5, 1.0, 0.6))
 	_return_later()
 
 
@@ -404,7 +404,7 @@ func _on_player_died() -> void:
 	in_raid = false
 	save_game()
 	raid_ended.emit("died", last_raid)
-	_show_overlay("사망\n가지고 간 물건 ₩%s를 잃었습니다\n은신처로 돌아갑니다" % _thousands(int(last_raid.get("value_lost", 0))), Color(1.0, 0.45, 0.4))
+	_show_overlay("{{ui:died_overlay}}" % _thousands(int(last_raid.get("value_lost", 0))), Color(1.0, 0.45, 0.4))
 	_return_later()
 
 

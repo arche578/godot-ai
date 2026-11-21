@@ -563,7 +563,7 @@ func _peek_or_install(template: String, dest: String, overwrite: bool, dry_run: 
 	if not reason.is_empty():
 		return Util.error(Util.INVALID_PARAMS, reason)
 	var exists := FileAccess.file_exists(dest)
-	var source := FileAccess.get_file_as_string(dest if exists and not overwrite else Util.TEMPLATE_DIR + template)
+	var source := FileAccess.get_file_as_string(dest) if exists and not overwrite else Util.template_source(template)
 	var script := GDScript.new()
 	script.source_code = source
 	if script.reload() != OK:

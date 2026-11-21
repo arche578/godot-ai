@@ -14,7 +14,7 @@ signal deploy_started(body: Node)
 signal deploy_cancelled(body: Node)
 signal deployed(body: Node)
 
-@export var door_name := "출격"
+@export var door_name := "{{ui:deploy}}"
 @export var deploy_time := 3.0
 @export var player_group: StringName = &"player"
 

@@ -23,21 +23,21 @@ const ACTION := &"playtest_note"
 const VERSION := 1
 ## Categories offered in the note window, in order: [id, label, color].
 ## Override them in Project Settings with playtest_notes/categories, an Array
-## of {"id": "bug", "label": "버그", "color": "#f24033"} (color optional).
+## of {"id": "bug", "label": "Bug", "color": "#f24033"} (color optional).
 const CATEGORIES_SETTING := "playtest_notes/categories"
 const DEFAULT_CATEGORIES := [
-	["bug", "버그", Color(0.95, 0.25, 0.2)],
-	["balance", "밸런스", Color(0.95, 0.7, 0.15)],
-	["level", "레벨/맵", Color(0.3, 0.7, 1.0)],
-	["graphics", "그래픽", Color(0.55, 0.5, 1.0)],
-	["art_style", "스타일(아트 컨셉)", Color(0.95, 0.45, 0.75)],
-	["ui", "UI", Color(0.2, 0.85, 0.8)],
-	["character", "캐릭터", Color(0.95, 0.5, 0.25)],
-	["vfx", "특수효과", Color(0.8, 0.95, 0.3)],
-	["sound", "사운드", Color(0.7, 0.4, 0.25)],
-	["experience", "게임 경험", Color(0.3, 0.55, 0.35)],
-	["idea", "아이디어", Color(0.45, 0.85, 0.4)],
-	["other", "기타", Color(0.8, 0.8, 0.8)],
+	["bug", "{{ui:note_bug}}", Color(0.95, 0.25, 0.2)],
+	["balance", "{{ui:note_balance}}", Color(0.95, 0.7, 0.15)],
+	["level", "{{ui:note_level}}", Color(0.3, 0.7, 1.0)],
+	["graphics", "{{ui:note_graphics}}", Color(0.55, 0.5, 1.0)],
+	["art_style", "{{ui:note_art_style}}", Color(0.95, 0.45, 0.75)],
+	["ui", "{{ui:note_ui}}", Color(0.2, 0.85, 0.8)],
+	["character", "{{ui:note_character}}", Color(0.95, 0.5, 0.25)],
+	["vfx", "{{ui:note_vfx}}", Color(0.8, 0.95, 0.3)],
+	["sound", "{{ui:note_sound}}", Color(0.7, 0.4, 0.25)],
+	["experience", "{{ui:note_experience}}", Color(0.3, 0.55, 0.35)],
+	["idea", "{{ui:note_idea}}", Color(0.45, 0.85, 0.4)],
+	["other", "{{ui:note_other}}", Color(0.8, 0.8, 0.8)],
 ]
 const FALLBACK_COLOR := Color(0.8, 0.8, 0.8)
 ## Notes are only taken in debug builds (editor runs and debug exports).
@@ -211,9 +211,9 @@ func _close(save: bool) -> void:
 	Input.mouse_mode = _prev_mouse_mode
 	_shot = null
 	if saved.has("error"):
-		_show_toast("메모 저장 실패: %s" % saved.error, Color(1, 0.4, 0.35))
+		_show_toast("{{ui:note_save_failed}}" % saved.error, Color(1, 0.4, 0.35))
 	elif save:
-		_show_toast("메모 저장됨 (%s)" % saved.get("id", ""), Color(0.6, 1, 0.6))
+		_show_toast("{{ui:note_saved}}" % saved.get("id", ""), Color(0.6, 1, 0.6))
 	else:
 		_clear_pins()
 
@@ -483,7 +483,7 @@ func _build_ui() -> void:
 	_panel.add_child(box)
 
 	_title = Label.new()
-	_title.text = "플레이테스트 메모 (일시정지됨)"
+	_title.text = "{{ui:note_title}}"
 	_title.add_theme_font_size_override("font_size", 18)
 	_title.add_theme_color_override("font_color", Color(1, 0.88, 0.4))
 	box.add_child(_title)
@@ -497,7 +497,7 @@ func _build_ui() -> void:
 	var row := HBoxContainer.new()
 	box.add_child(row)
 	var cat_label := Label.new()
-	cat_label.text = "종류"
+	cat_label.text = "{{ui:note_kind}}"
 	row.add_child(cat_label)
 	_category = OptionButton.new()
 	for c in categories():
@@ -508,7 +508,7 @@ func _build_ui() -> void:
 
 	_text = TextEdit.new()
 	_text.custom_minimum_size = Vector2(0, 96)
-	_text.placeholder_text = "무엇이 이상한가요? (Enter 저장 · Shift+Enter 줄바꿈 · Esc 취소 · Tab 위치 전환)"
+	_text.placeholder_text = "{{ui:note_placeholder}}"
 	_text.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
 	_text.gui_input.connect(_on_text_input)
 	box.add_child(_text)
@@ -517,12 +517,12 @@ func _build_ui() -> void:
 	buttons.alignment = BoxContainer.ALIGNMENT_END
 	box.add_child(buttons)
 	var cancel := Button.new()
-	cancel.text = "취소 (Esc)"
+	cancel.text = "{{ui:cancel_esc}}"
 	cancel.focus_mode = Control.FOCUS_NONE
 	cancel.pressed.connect(_close.bind(false))
 	buttons.add_child(cancel)
 	var save := Button.new()
-	save.text = "저장 (Enter)"
+	save.text = "{{ui:save_enter}}"
 	save.focus_mode = Control.FOCUS_NONE
 	save.pressed.connect(_close.bind(true))
 	buttons.add_child(save)
@@ -546,17 +546,17 @@ func _on_text_input(event: InputEvent) -> void:
 
 
 func _refresh_info() -> void:
-	var where := "위치 없음"
+	var where := "{{ui:no_position}}"
 	var pos: Variant = marker_position(_use_player)
 	if pos != null:
-		var source := "플레이어" if _use_player and _context.has("player_position") else "마우스"
-		where = "%s 위치 (%.1f, %.1f, %.1f)" % [source, pos[0], pos[1], pos[2]]
+		var source := "{{ui:player}}" if _use_player and _context.has("player_position") else "{{ui:mouse}}"
+		where = "{{ui:position_at}}" % [source, pos[0], pos[1], pos[2]]
 	var target := ""
 	if _context.has("cursor_node") and not _use_player:
 		target = " · " + str(_context.cursor_node).get_file()
 	var scene := str(_context.get("scene_name", "?"))
 	var open_here := _existing_notes(str(_context.get("scene", ""))).size()
-	_info.text = "%s · %s%s · 스크린샷 %s · 이 씬의 열린 메모 %d개" % [scene, where, target, "저장" if _shot != null else "없음", open_here]
+	_info.text = "{{ui:note_info}}" % [scene, where, target, "{{ui:saved_word}}" if _shot != null else "{{ui:none_word}}", open_here]
 	_show_pins()
 
 
@@ -597,7 +597,7 @@ func _show_pins() -> void:
 			_pins.add_child(make_pin(at, category_color(str(note.get("category", "other"))), str(note.get("text", "")).left(30), 0.6))
 	var here: Variant = _vec(marker_position(_use_player))
 	if here != null:
-		_pins.add_child(make_pin(here, Color(1, 0.85, 0.2), "새 메모", 1.0))
+		_pins.add_child(make_pin(here, Color(1, 0.85, 0.2), "{{ui:new_note}}", 1.0))
 
 
 func _clear_pins() -> void:

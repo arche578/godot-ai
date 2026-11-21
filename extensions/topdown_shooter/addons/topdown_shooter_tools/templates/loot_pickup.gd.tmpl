@@ -14,11 +14,11 @@ extends Area3D
 signal picked_up(collector: Node, item_id: String, count: int)
 
 const RARITY_COLORS := {
-	"common": Color(0.8, 0.8, 0.8),
-	"uncommon": Color(0.35, 0.85, 0.35),
-	"rare": Color(0.3, 0.55, 1.0),
-	"epic": Color(0.7, 0.35, 1.0),
-	"legendary": Color(1.0, 0.65, 0.1),
+	"common": Color("{{rarity_color:common}}"),
+	"uncommon": Color("{{rarity_color:uncommon}}"),
+	"rare": Color("{{rarity_color:rare}}"),
+	"epic": Color("{{rarity_color:epic}}"),
+	"legendary": Color("{{rarity_color:legendary}}"),
 }
 
 @export var item_id := ""

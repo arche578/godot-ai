@@ -946,7 +946,7 @@ func _extraction(p: Dictionary, script: Script, zone_name: String, at: Vector3) 
 	zone.add_child(beacon)
 	var label := Label3D.new()
 	label.name = "Label"
-	label.text = "탈출 지점"
+	label.text = Util.UiText.text("extraction")
 	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	label.no_depth_test = true
 	label.font_size = 64
@@ -983,7 +983,7 @@ func _crate(p: Dictionary, scripts: Dictionary, loot_table: Resource, crate_name
 	crate.add_child(shape)
 	var label := Label3D.new()
 	label.name = "Label"
-	label.text = "상자"
+	label.text = Util.UiText.text("crate")
 	label.visible = false
 	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	label.no_depth_test = true

@@ -450,7 +450,7 @@ static func chances(table: Dictionary) -> Dictionary:
 ## Compiles a @tool copy of the project's loot_table.gd (or the template
 ## when it is not installed yet) so its roll() can run inside the editor.
 func _table_script(path: String, use_template: bool) -> Variant:
-	var source := FileAccess.get_file_as_string(Util.TEMPLATE_DIR + "loot_table.gd.tmpl" if use_template else path)
+	var source := Util.template_source("loot_table.gd.tmpl") if use_template else FileAccess.get_file_as_string(path)
 	if not source.contains("@tool"):
 		source = "@tool\n" + source
 	var script := GDScript.new()
