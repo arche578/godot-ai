@@ -17,14 +17,14 @@
    복사합니다. 결과: `<게임 프로젝트>/addons/topdown_shooter_tools/plugin.cfg`
 2. Godot에서 **프로젝트 > 프로젝트 설정 > 플러그인**을 열고 `Godot AI`와
    `Top-down Shooter Tools`를 둘 다 켭니다.
-3. Godot AI 독의 **Tools** 탭에 도구 19개가 보이면 끝입니다. Claude Code나 Claude
+3. Godot AI 독의 **Tools** 탭에 도구 21개가 보이면 끝입니다. Claude Code나 Claude
    데스크톱에는 `custom_topdown_camera_setup`, `custom_player_controller_scaffold`,
    `custom_weapon_create`, `custom_combat_feedback_setup`, `custom_enemy_ai_scaffold`, `custom_item_db_import`,
    `custom_loot_table_edit`, `custom_inventory_ui_scaffold`, `custom_raid_map_blockout`,
    `custom_raid_playtest`, `custom_playtest_notes`, `custom_hideout_scaffold`,
    `custom_asset_cleanup`, `custom_asset_import`, `custom_swap_placeholder`,
    `custom_asset_generate`, `custom_asset_job`, `custom_asset_pipeline`,
-   `custom_item_icon_render`라는 이름으로 나타납니다(승격 도구). 다만 Godot AI 서버가
+   `custom_polyhaven_fetch`, `custom_environment_setup`, `custom_item_icon_render`라는 이름으로 나타납니다(승격 도구). 다만 Godot AI 서버가
    승격 도구를 이름순 8개까지만 등록하므로, 나머지는
    `custom_manage(op="invoke", params={"tool_name": ..., "params": {...}})`로 부릅니다.
 
@@ -46,10 +46,12 @@
 | `playtest_notes` | 플레이 중 메모. 게임에서 F9(또는 Ctrl/Cmd+N, 맥은 F8도)를 누르면 일시정지하고 화면을 찍은 뒤, 마우스가 가리키는 바닥(Tab으로 플레이어 위치)에 핀을 꽂고 메모 창을 띄움. 메모·종류·씬·좌표·카메라·커서 아래 노드·최근 엔진 오류·시각과 스크린샷(표시한 곳에 빨간 원)을 `res://playtest_notes/`에 저장. Claude가 목록·내용·사진을 읽고 고친 뒤 `resolve`로 닫음. 열린 씬에 메모 핀 표시(보기 전용, 저장 안 됨). 닫기·다시 열기·삭제는 실행 취소 한 번. 처음 한 번 `PlaytestNotes` 자동 로드를 등록(디버그 빌드에서만 동작) |
 | `asset_cleanup` | 내려받거나 AI로 만든 모델(.glb/.gltf/.fbx/.obj/.blend)을 Blender로 창 없이 정리. 앞을 -Z로 돌리고(무기는 가는 총구 쪽을 찾아서), 미터 크기로 맞추고(캐릭터 키 1.8, 무기 길이 0.7, 아이템 0.3m), 원점을 바닥 중앙(무기는 손잡이)에 두고, 삼각형 예산까지 줄이고, 큰 텍스처를 줄이고, 무기에 `Muzzle` 지점을 넣어 .glb로 내보냄. 원본은 건드리지 않음. 이어서 `asset_import`까지 실행 |
 | `asset_import` | 모델을 규칙 폴더 `res://assets/<종류>s/<id>/<id>.glb`로 복사하고 임포트 설정(LOD, 탄젠트, 그림자 메시)을 써서 전체 scan 없이 임포트. 실제 크기(m)·원점·삼각형·머티리얼·텍스처 크기·뼈·애니메이션·Muzzle과 예산 초과·방향 경고를 보고하고, GUI 에디터면 미리보기 PNG. 실행 취소 한 번 |
-| `swap_placeholder` | 임시 도형을 모델로 교체. 임시 메시는 지우지 않고 숨기고, 모델은 옆의 `<이름>Skin` 노드에 넣어서 충돌·스크립트·노드 경로가 그대로. 플레이어·적(`Body`를 캡슐 키에 맞춤, 플레이어는 조준을 따라 돎), 무기(`Model` 교체, `Muzzle`을 모델 총구로), 레이드 맵(`Walls`·`Floors`는 길이 따라 타일, `Cover`·`Crates`는 상자에 맞춤), 아이템(바닥 아이템이 상자 대신 모델과 희귀도 빛). 다시 실행하면 교체, `revert=true`로 되돌림. 실행 취소 한 번 |
+| `swap_placeholder` | 임시 도형을 모델로 교체. 임시 메시는 지우지 않고 숨기고, 모델은 옆의 `<이름>Skin` 노드에 넣어서 충돌·스크립트·노드 경로가 그대로. 플레이어·적(`Body`를 캡슐 키에 맞춤, 플레이어는 조준을 따라 돎), 무기(`Model` 교체, `Muzzle`을 모델 총구로), 레이드 맵(`Walls`·`Floors`는 길이 따라 타일, `Cover`·`Crates`는 상자에 맞춤), 아이템(바닥 아이템이 상자 대신 모델과 희귀도 빛), 모듈 키트(`target=kit`: 레이드 맵 `Floors`·`Walls`·`Cover`와 은신처 `Room`을 1m 격자 조각으로, 아래 참고). 다시 실행하면 교체, `revert=true`로 되돌림. 실행 취소 한 번 |
 | `asset_generate` | Meshy·Tripo로 3D 모델 생성 시작. 프롬프트 뒤에 종류별 문구와 공통 스타일 프리셋(`res://assets/style_preset.json`)을 붙이고, 후보마다 작업 하나(기본 2개)를 만들고 바로 작업 번호를 돌려줌. 문장 생성은 텍스처 없는 후보만 만들고 고른 것만 텍스처를 입힘. 참고 이미지(URL·파일)도 됨. `dry_run`은 프롬프트·예상 크레딧만. 하루 작업 상한(기본 20) |
 | `asset_job` | 생성 작업 상태(후보 미리보기 PNG 저장), 탑뷰 렌더 미리보기, 후보 고르기, 다운로드, 취소, 목록, 서비스별 남은 크레딧, 밖에서 만든 모델 대기 목록(inbox) |
 | `asset_pipeline` | 한 번에 이어 돌리기: 생성 → 후보가 나오면 **멈춰서 고르기를 기다림** → 텍스처 → 다운로드 → `asset_cleanup` → `asset_import` → `swap_placeholder` → (아이템이면) `item_icon_render` → 교체 전후 렌더와 판정. 같은 `asset_id`로 다시 부르면 이어서 진행. `source=`로 밖에서 만든 모델(Tripo Studio, meshy CLI)을 넣으면 정리 단계부터 |
+| `polyhaven_fetch` | Poly Haven(CC0, 키 없음)에서 텍스처 세트나 HDRI를 받음. 텍스처는 `res://assets/materials/<이름>/`에 색·노멀(.import에 노멀 맵 표시)·ARM(또는 거칠기·AO·금속)과 머티리얼 `<이름>.tres`(월드 좌표 트라이플래너라 늘린 상자·키트 조각에도 무늬가 고르게, `tile_meters`마다 반복). HDRI는 `res://assets/hdri/<이름>.hdr`. `search=`는 id 목록만. 출처·작가·라이선스를 `res://asset_sources/polyhaven/`에 기록. 실행 취소 한 번 |
+| `environment_setup` | 열린 3D 씬의 `WorldEnvironment`와 해를 추가하거나 고침. 하늘(HDRI 또는 기본 하늘), 주변광, 톤맵, SSAO, 거리·높이 안개, 볼류메트릭 안개, 해 색·세기·각도·그림자. 값은 호출 인자 > `style_preset.json`의 `environment` > 중립 기본값. Environment는 공용 `.tres`(기본 `res://assets/environment/world_environment.tres`)에 저장해 레이드 맵과 은신처가 같은 분위기. 실행 취소 한 번 |
 | `item_icon_render` | 인벤토리 아이콘. 아이템 3D 모델(`item.model`)을 고정 정사영 카메라·조명·투명 배경으로 렌더해 `res://assets/icons/items/<item_id>.png`(칸 수 × `cell_px`, 기본 128px)를 만들고 `item.icon`을 채움. 긴 변을 가로로 눕히고(앞은 오른쪽) 얇은 테두리를 둘러 희귀도 색 칸에서도 잘 보이게 함. 모델 모양으로 칸 수(`grid_width`/`grid_height`)를 제안하고 `apply_grid=true`면 씀. 예전 사본의 `inventory_ui.gd`·`hideout.gd`가 칸에 아이콘을 그리도록 고침. 여러 개 한 번에(`item_ids`, `all=true`). GUI 에디터 필요(`dry_run`은 어디서나). 실행 취소 한 번 |
 
 Claude에게는 이렇게 말하면 됩니다.
@@ -80,6 +82,9 @@ Claude에게는 이렇게 말하면 됩니다.
 > 모델 있는 아이템 전부 인벤토리 아이콘 만들어 줘. 칸 수 제안도 적용해 줘.
 
 > ~/Downloads/rifle.glb를 smg 무기로 정리해서 넣고 smg 씬의 상자를 바꿔 줘. 레이드 맵 상자는 crate 모델로.
+
+> Poly Haven에서 concrete_wall_008이랑 흐린 하늘 HDRI 받아서, 레이드 맵 벽·바닥·엄폐물을 모듈 키트로 바꾸고
+> 안개 조금 넣어 줘. 은신처도 같은 환경으로.
 
 > 플레이 메모 기능 켜 줘. (플레이하며 F9로 메모를 남긴 뒤) 내가 남긴 메모 보고 고쳐 줘.
 
@@ -545,3 +550,23 @@ API 크레딧 없이 웹 크레딧이나 CLI로 만든 모델도 같은 파이�
 | 하루 상한 | 후보 하나, 텍스처 한 번이 각각 1건. 편집기 데이터 폴더에 날짜별로 세므로 모든 프로젝트에 함께 적용 |
 | 교체 | 무기는 `scenes/weapons/<id>.tscn`, 아이템은 같은 id의 아이템이 기본. 캐릭터·프랍은 `swap={"target": "enemy"}`, `swap={"target": "map", "group": "Crates"}`처럼 지정. `swap=false`면 가져오기까지만 |
 | 실행 취소 | 생성은 서비스에서 일어나 되돌릴 수 없음. 가져오기와 교체는 각각 실행 취소 한 번 |
+
+## 환경: 재질, 모듈 키트, 안개·조명
+
+```
+polyhaven_fetch search="concrete wall"                     # id 찾기
+polyhaven_fetch asset=concrete_wall_008                    # 텍스처 + 머티리얼
+polyhaven_fetch asset=kloofendal_overcast_puresky          # HDRI
+swap_placeholder target=kit materials={"wall": "concrete_wall_008"}
+environment_setup hdri=kloofendal_overcast_puresky fog=true
+```
+
+| 규칙 | 내용 |
+|---|---|
+| 키트 폴더 | `res://assets/props/kit/<kit>/`(기본 `kit`). 조각 이름: `wall_1m`·`wall_2m`·`wall_4m`, `low_wall_1m`…, `floor_1m`…, `pillar`, `box`. 길이는 +X, 원점은 바닥 중앙(바닥 타일은 윗면이 y=0) |
+| 없는 조각 | 키트 재질(`wall`·`floor`·`cover`·`trim`)로 상자 조각 `.tscn`을 만들어 채움. 같은 이름의 `.glb`(asset_import)를 넣으면 그 조각만 모델로 바뀌고, `rebuild_kit=true`는 만든 조각만 다시 만듦 |
+| 1m 격자 | 벽은 칸 수를 4·2·1m 모듈로 나누고(큰 것부터), 모서리 겹침만큼은 조금 늘려 덮음(`max_stretch`로 보고). 바닥은 두 축 모두 같은 방식 |
+| 역할 | `Floors`→바닥, `Walls`→벽(1.5m 미만은 낮은 벽), `Cover`→`LowWall`·`Pillar`·`Box`, 은신처 `Room`→`Floor`·`Wall*`. `Crates`·가구는 그대로(`target=map`으로 따로) |
+| 충돌·내비 | 블록아웃 상자의 StaticBody3D·충돌 모양은 그대로고 내비 메시는 충돌로만 구우므로 바뀌지 않음. 충돌이 든 조각은 거부 |
+| 아트 방향 | 재질·하늘·안개·해 값은 게임 프로젝트의 `res://assets/style_preset.json` `environment`에만 둠(`kit_materials`에 polyhaven_fetch 이름). 애드온 기본값은 중립 |
+
