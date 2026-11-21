@@ -29,6 +29,7 @@ extends RefCounted
 
 const Util := preload("res://addons/topdown_shooter_tools/handlers/scaffold_util.gd")
 const AssetTools := preload("res://addons/topdown_shooter_tools/handlers/asset_tools.gd")
+const EnvTools := preload("res://addons/topdown_shooter_tools/handlers/env_tools.gd")
 
 const KIT_ROOT := "res://assets/props/kit"
 const DEFAULT_KIT := "kit"
@@ -186,6 +187,7 @@ static func ensure_kit(p: Dictionary, dry: bool) -> Variant:
 			var err := Util.save_scene(root, target)
 			if not err.is_empty():
 				return Util.error(Util.INTERNAL_ERROR, err)
+			EnvTools.register_uid(target)
 			ResourceLoader.load(target, "PackedScene", ResourceLoader.CACHE_MODE_REPLACE)
 		pieces[piece] = {"path": target, "aabb": box}
 		generated.append(piece)

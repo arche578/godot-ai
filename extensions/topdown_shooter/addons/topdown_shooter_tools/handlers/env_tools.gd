@@ -285,7 +285,8 @@ func _fetch_async(p: Dictionary, ctx) -> Dictionary:
 	_busy = false
 	if kind == "texture":
 		if plan.material_class != "":
-			report["next"] = "swap_placeholder target=kit materials={\"wall\": \"%s\"} (or style_preset.json environment.kit_materials), or drag %s onto a mesh" % [p.name, plan.material]
+			var role := guess_kit_role(p.asset)
+			report["next"] = "swap_placeholder target=kit materials={\"%s\": \"%s\"} (kit roles: wall, floor, cover, trim; or style_preset.json environment.kit_materials), or drag %s onto a mesh" % [role, p.name, plan.material]
 	else:
 		report["hdri"] = plan.hdri
 		report["next"] = "environment_setup hdri=%s" % plan.hdri
@@ -293,6 +294,31 @@ func _fetch_async(p: Dictionary, ctx) -> Dictionary:
 	if not imported:
 		report["note"] = "The editor imports the files on its next scan (focus the Godot window). The material works once they are imported."
 	return {"data": report}
+
+
+## The kit role a texture most likely fits, from its id (only a hint).
+static func guess_kit_role(asset_id: String) -> String:
+	var id := asset_id.to_lower()
+	for word in ["floor", "ground", "tile", "pavement", "asphalt", "road", "dirt", "gravel", "soil"]:
+		if id.contains(word):
+			return "floor"
+	for word in ["metal", "rust", "wood", "plank", "crate", "plastic"]:
+		if id.contains(word):
+			return "cover"
+	return "wall"
+
+
+## Registers a just-saved resource's UID with the running editor, so a
+## scene that references it right away resolves it by UID (no "invalid
+## UID, using text path" warning before the next file scan).
+static func register_uid(path: String) -> void:
+	var uid := ResourceLoader.get_resource_uid(path)
+	if uid == ResourceUID.INVALID_ID:
+		return
+	if ResourceUID.has_id(uid):
+		ResourceUID.set_id(uid, path)
+	else:
+		ResourceUID.add_id(uid, path)
 
 
 ## Which files to download and where. {downloads: [{map, url, path, bytes,
@@ -583,6 +609,7 @@ func environment_setup(params: Dictionary, _ctx = null) -> Dictionary:
 		before.restore()
 		return Util.error(Util.INTERNAL_ERROR, err)
 	var after := ItemTools.FileSnapshot.capture([p.environment_path])
+	register_uid(p.environment_path)
 	Util.refresh_filesystem([p.environment_path])
 
 	var ur := EditorInterface.get_editor_undo_redo()
