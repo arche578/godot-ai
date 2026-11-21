@@ -15,6 +15,9 @@ extends RefCounted
 ## settings (.import), imports it and reports what Godot actually got: size
 ## in meters, triangles, materials, texture sizes, bones, animation clips,
 ## where the origin sits, the Muzzle point and anything over budget.
+## Re-importing an asset_id removes the texture files that earlier imports
+## of it left in the folder and the new model no longer uses (only files
+## asset.json recorded; files added by hand stay), in the same undo step.
 ##
 ## Never a full EditorFileSystem.scan() (it crashes the GUI editor when
 ## stacked): a file in a folder the editor already knows is imported with
@@ -38,6 +41,9 @@ const KINDS := ["weapon", "item", "prop", "character"]
 const KIND_DIRS := {"weapon": "weapons", "item": "items", "prop": "props", "character": "characters"}
 const MODEL_EXTENSIONS := ["glb", "gltf", "fbx", "obj"]
 const CLEANUP_EXTENSIONS := ["glb", "gltf", "fbx", "obj", "blend"]
+## Texture files an import leaves next to the model (a .gltf's images,
+## images Godot extracts from a .glb).
+const TEXTURE_EXTENSIONS := ["png", "jpg", "jpeg", "webp"]
 ## Triangles and the largest texture side per kind (asset pipeline plan).
 const BUDGETS := {
 	"weapon": {"triangles": 5000, "texture": 512},
@@ -514,11 +520,15 @@ func import_asset(p: Dictionary) -> Dictionary:
 		ur.add_do_method(after, "restore")
 		ur.add_undo_method(before, "restore")
 		ur.commit_action(false)
-	_append_record(p.asset_id, {"step": "import", "source": p.source, "kind": p.kind, "dest": p.dest})
-
 	var copied: Array = []
 	for c in copies:
 		copied.append(c[1])
+	## For finish_import: what this import wrote, and the undo snapshots
+	## the removal of old textures joins.
+	p["_copied"] = copied
+	p["_snapshots"] = [before, after]
+	_append_record(p.asset_id, {"step": "import", "source": p.source, "kind": p.kind, "dest": p.dest, "files": copied})
+
 	var known := folder_known(p.dest_dir)
 	var efs := EditorInterface.get_resource_filesystem() if Engine.is_editor_hint() else null
 	if not known or efs == null or efs.is_scanning() or efs.is_importing():
@@ -548,11 +558,96 @@ func finish_import(p: Dictionary, imported: bool) -> Dictionary:
 		data["error"] = info.error
 		return data
 	data.merge(info)
+	var used := _texture_files(info, p.dest_dir)
+	if p.has("_snapshots"):
+		var removed := _remove_stale_textures(p, used)
+		if not removed.is_empty():
+			data["removed_old_textures"] = removed
 	_append_record(p.asset_id, {"step": "report", "path": p.dest, "size": info.get("size"), "triangles": info.get("triangles"),
-		"materials": info.get("materials"), "textures": info.get("textures"), "warnings": info.get("warnings")})
-	data["undo"] = "One editor undo step (Edit > Undo) restores the files as they were before this import."
+		"materials": info.get("materials"), "textures": info.get("textures"), "texture_files": used, "warnings": info.get("warnings")})
+	data["undo"] = "One editor undo step (Edit > Undo) restores the files as they were before this import%s." % (" (old textures included)" if data.has("removed_old_textures") else "")
 	data["next"] = _next_hint(p.kind, p.asset_id, p.dest)
 	return data
+
+
+## Texture files under `dest_dir` that the imported model uses.
+static func _texture_files(info: Dictionary, dest_dir: String) -> Array:
+	var out: Array = []
+	for t in info.get("textures", []):
+		var path := String(t.get("path", "")) if t is Dictionary else ""
+		if path.begins_with(dest_dir + "/") and path.get_extension().to_lower() in TEXTURE_EXTENSIONS and not path in out:
+			out.append(path)
+	return out
+
+
+## Deletes the texture files (and their .import) that earlier imports of
+## this asset_id left in its folder and this import does not use. Only
+## files asset.json lists are touched. The undo step restores them and the
+## files before this import, so one undo still undoes the whole import.
+func _remove_stale_textures(p: Dictionary, used: Array) -> Array:
+	var keep: Array = p.get("_copied", []).duplicate()
+	keep.append_array(used)
+	var stale: Array = []
+	for path in stale_texture_files(read_json(work_dir(p.asset_id) + "/asset.json"), p.dest_dir, keep):
+		if FileAccess.file_exists(path):
+			stale.append(path)
+	if stale.is_empty():
+		return stale
+	var targets: Array = []
+	for path in stale:
+		targets.append(path)
+		targets.append(path + ".import")
+	var before := ItemTools.FileSnapshot.capture(targets)
+	for path in targets:
+		if FileAccess.file_exists(path):
+			DirAccess.remove_absolute(ProjectSettings.globalize_path(path))
+	var after := ItemTools.FileSnapshot.capture(targets)
+	Util.refresh_filesystem(stale)
+	if Engine.is_editor_hint():
+		var snaps: Array = p._snapshots
+		var ur := EditorInterface.get_editor_undo_redo()
+		ur.create_action("Remove old textures of %s" % p.asset_id, UndoRedo.MERGE_DISABLE, null, false, false)
+		ur.add_do_method(snaps[1], "restore")
+		ur.add_do_method(after, "restore")
+		ur.add_undo_method(before, "restore")
+		ur.add_undo_method(snaps[0], "restore")
+		ur.commit_action(false)
+	return stale
+
+
+## Texture files that asset.json says earlier imports put under `dest_dir`
+## (files a .gltf import copied, textures an imported model used; for
+## records older than those fields, texture names that are file names),
+## minus `keep`. Never anything the record does not name.
+static func stale_texture_files(record: Variant, dest_dir: String, keep: Array) -> Array:
+	var out: Array = []
+	if not record is Dictionary or not record.get("history") is Array:
+		return out
+	for entry in record.history:
+		if not entry is Dictionary:
+			continue
+		var candidates: Array = []
+		match String(entry.get("step", "")):
+			"import":
+				if entry.get("files") is Array:
+					candidates.append_array(entry.files)
+			"report":
+				if entry.get("texture_files") is Array:
+					candidates.append_array(entry.texture_files)
+				var base := String(entry.get("path", "")).get_base_dir()
+				if not base.is_empty() and entry.get("textures") is Array:
+					for t in entry.textures:
+						if t is Dictionary and t.get("name") is String and not String(t.name).contains("/"):
+							candidates.append(base.path_join(t.name))
+		for c in candidates:
+			if not c is String:
+				continue
+			var path := String(c)
+			if not path.begins_with(dest_dir + "/") or path.contains("..") or path in keep or path in out:
+				continue
+			if path.get_extension().to_lower() in TEXTURE_EXTENSIONS:
+				out.append(path)
+	return out
 
 
 static func _next_hint(kind: String, asset_id: String, path: String) -> String:
@@ -800,6 +895,8 @@ static func _collect_textures(mat: Material, out: Dictionary) -> void:
 		if name.is_empty():
 			name = "texture_%d" % out.size()
 		out[name] = {"name": name, "size": [tex.get_width(), tex.get_height()]}
+		if not tex.resource_path.is_empty() and not tex.resource_path.contains("::"):
+			out[name]["path"] = tex.resource_path
 
 
 ## Transform of `node` in `ancestor` space, without needing the scene tree.
