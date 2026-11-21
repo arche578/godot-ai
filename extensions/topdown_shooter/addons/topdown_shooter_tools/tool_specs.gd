@@ -765,7 +765,7 @@ static func definitions() -> Array[Dictionary]:
 			"script": CHARACTER_HANDLER_PATH,
 			"deferred": true,
 			"timeout_ms": 120000,
-			"description": "Animate a player/enemy with a rigged model (Mixamo/Meshy/Tripo .fbx/.glb). Copies model and clips (Mixamo FBX: Without Skin, In Place) in, retargets both to Godot's humanoid profile (bone map guessed), roles from file names into one shared AnimationLibrary, swaps Body (swap_placeholder), adds an AnimationTree and a CharacterAnimator: speed -> idle/walk/run, AI state -> aim, died -> death, damage, fire, reload, dodge; the weapon mount follows the hand bone. Files, swap and scene: one undo step each.",
+			"description": "Animate a player/enemy with a rigged model (Mixamo/Meshy/Tripo .fbx/.glb). Copies model and clips (Mixamo FBX: Without Skin, In Place) in, retargets both to Godot's humanoid profile (bone map guessed), roles from file names into one shared AnimationLibrary, swaps Body (swap_placeholder), adds an AnimationTree and a CharacterAnimator: speed -> idle/walk/run, AI state -> aim, no weapon -> unarmed idle/walk/run if present, died -> death, damage, fire, reload, dodge; the weapon mount follows the hand bone. Files, swap and scene: one undo step each.",
 			"schema": {
 				"type": "object",
 				"additionalProperties": false,
@@ -776,7 +776,7 @@ static func definitions() -> Array[Dictionary]:
 					"scene": _desc(_STR, "Override the .tscn. Edited live when open."),
 					"model": _desc(_STR, "Rigged model file (~/Downloads/x.fbx, absolute or res://). Default: the rule folder's model."),
 					"animations": _desc({"type": ["array", "string"], "items": _STR}, "Animation files or folders (.fbx/.glb). Optional once the library has clips."),
-					"clips": _desc({"type": "object"}, "{role: file or clip name} when a name does not say it. Roles: idle walk run walk_back strafe_left strafe_right aim fire reload dodge hit death attack."),
+					"clips": _desc({"type": "object"}, "{role: file or clip name} when a name does not say it. Roles: idle walk run walk_back strafe_left strafe_right aim fire reload dodge hit death attack unarmed_idle unarmed_walk unarmed_run (no-weapon set; names with \"Unarmed\" pick it too)."),
 					"library": _desc(_STR, "AnimationLibrary .res. Default res://assets/animations/humanoid/humanoid.res."),
 					"anim_dir": _desc(_STR, "Where clip files are copied. Default res://assets/animations/humanoid/sources."),
 					"in_place": _desc(_BOOL, "Remove forward motion of Hips. Default true."),

@@ -5,6 +5,7 @@ extends Node
 ## scripts are not changed.
 ##
 ##   movement speed  -> locomotion blend (idle / walk / run, strafes if any)
+##   no weapon       -> unarmed idle / walk / run, when the library has them
 ##   AI state        -> aim pose while the state is in `aim_states`
 ##   died            -> death clip, then the pose holds
 ##   health drops    -> hit reaction (upper body)
@@ -39,13 +40,20 @@ extends Node
 @export var aim_states := PackedStringArray(["ATTACK", "CHASE"])
 ## Hold the aim pose whenever the body has a weapon (the player).
 @export var aim_when_armed := true
+## auto: the unarmed clips while the body has no weapon (the player, e.g. in
+## the hideout; AI bodies stay armed). armed/unarmed: always that set.
+@export_enum("auto", "armed", "unarmed") var stance: String = "auto"
 
 @export_group("Weapon in hand")
 @export_enum("hand_position", "hand", "none") var weapon_follow: String = "hand_position"
 @export var weapon_mount_path: NodePath = ^"../Aim/WeaponMount"
 @export var hand_bone: StringName = &"RightHand"
-## Offset from the hand, in the body's space (meters).
+## Offset from the hand, in the body's space (meters), or in the hand
+## bone's own space with grip_in_hand_space.
 @export var grip_offset := Vector3.ZERO
+## grip_offset turns with the hand bone, so a clip that twists the wrist
+## (rifle walk) keeps the palm on the grip; the gun still points where it aims.
+@export var grip_in_hand_space := false
 ## weapon_follow = hand: extra turn of the weapon relative to the hand.
 @export var grip_rotation_degrees := Vector3.ZERO
 
@@ -59,6 +67,7 @@ var _last_health := -1.0
 var _dead := false
 var _blend := Vector2.ZERO
 var _aim := 0.0
+var _unarmed := 0.0
 
 
 func _ready() -> void:
@@ -177,16 +186,34 @@ func _update_locomotion(delta: float) -> void:
 	var k := 1.0 if blend_smoothing <= 0.0 else 1.0 - exp(-blend_smoothing * delta)
 	_blend = _blend.lerp(target, k)
 	_set_param("locomotion/blend_position", _blend if directional else _blend.y)
+	_update_stance(delta)
 	if scale_with_speed:
 		var top := run_speed if has_role("run") else walk_speed
 		_set_param("loco_speed/scale", clampf(speed / top, 1.0, 2.0) if top > 0.0 and speed > top else 1.0)
+
+
+func is_unarmed() -> bool:
+	if stance == "auto":
+		return _weapon == null and not _body.has_method("get_state_name")
+	return stance == "unarmed"
+
+
+func _update_stance(delta: float) -> void:
+	if not (has_role("unarmed_idle") or has_role("unarmed_walk") or has_role("unarmed_run")):
+		return
+	_unarmed = move_toward(_unarmed, 1.0 if is_unarmed() else 0.0, delta * 5.0)
+	_set_param("stance/blend_amount", _unarmed)
+	## Unarmed locomotion is speed only (no strafe clips).
+	_set_param("unarmed_locomotion/blend_position", _blend.length() if directional else _blend.y)
 
 
 func _update_aim(delta: float) -> void:
 	if not has_role("aim"):
 		return
 	var want := 0.0
-	if _body.has_method("get_state_name"):
+	if is_unarmed():
+		want = 0.0
+	elif _body.has_method("get_state_name"):
 		want = 1.0 if aim_states.has(String(_body.get_state_name())) else 0.0
 	elif aim_when_armed and _weapon != null:
 		want = 1.0
@@ -200,7 +227,8 @@ func _follow_hand() -> void:
 	if weapon_follow == "none" or _mount == null or _skeleton == null or _hand < 0:
 		return
 	var hand := _skeleton.global_transform * _skeleton.get_bone_global_pose(_hand)
-	_mount.global_position = hand.origin + _body.global_basis * grip_offset
+	var offset := hand.basis.orthonormalized() * grip_offset if grip_in_hand_space else _body.global_basis * grip_offset
+	_mount.global_position = hand.origin + offset
 	if weapon_follow == "hand":
 		var turn := Basis.from_euler(grip_rotation_degrees * (PI / 180.0))
 		_mount.global_basis = (hand.basis.orthonormalized() * turn).scaled(_mount.global_basis.get_scale())
