@@ -4078,6 +4078,9 @@ func test_polyhaven_fetch_hdri_search_and_errors() -> void:
 	assert_eq(hdri.data.hdri, WORK_DIR + "/hdri/%s_sky.hdr" % ENV_NAME)
 	assert_true(FileAccess.file_exists(hdri.data.hdri), "hdr downloaded")
 	assert_true(String(hdri.data.next).begins_with("environment_setup"), hdri.data.next)
+	assert_eq(EnvTools.guess_kit_role("concrete_floor_02"), "floor")
+	assert_eq(EnvTools.guess_kit_role("rusty_metal_02"), "cover")
+	assert_eq(EnvTools.guess_kit_role("concrete_wall_008"), "wall")
 
 	var found := env.polyhaven_fetch({"search": "moss rock"})
 	assert_has_key(found, "data", str(found))
@@ -4114,6 +4117,8 @@ func test_environment_setup_world_environment_sun_and_undo() -> void:
 	assert_eq(e.tonemap_mode, Environment.TONE_MAPPER_ACES)
 	assert_true(e.sky != null and e.sky.sky_material is ProceduralSkyMaterial, "procedural sky without an HDRI")
 	assert_eq(e.resource_path, path, "the scene uses the shared file")
+	var env_uid := ResourceLoader.get_resource_uid(path)
+	assert_true(env_uid != ResourceUID.INVALID_ID and ResourceUID.has_id(env_uid) and ResourceUID.get_id_path(env_uid) == path, "UID registered at once")
 	var sun := McpScenePath.resolve(result.data.sun, root) as DirectionalLight3D
 	assert_true(sun != null and absf(sun.light_energy - 0.6) < 0.0001, "sun set: %s" % result.data.sun)
 
