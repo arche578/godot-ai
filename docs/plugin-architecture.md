@@ -692,9 +692,11 @@ invoke always resolve the same editor). A spec with `promoted = true` opts
 into ALSO being registered as a first-class MCP tool named
 `custom_<name>`, advertising the addon's `params_schema` verbatim so MCP
 clients validate params natively. Promotion is capped server-side
-(`MAX_PROMOTED_TOOLS` in `services/promoted_tools.py`) to protect the
-repo's tool budget; overflow stays behind `custom_manage`, and the sync
-follows every catalog change live via `tools/list_changed`.
+(`max_promoted_tools()` in `services/promoted_tools.py`; this fork defaults
+to 32 and reads `GODOT_AI_MAX_PROMOTED_TOOLS`, see `FORK.md`) to protect the
+repo's tool budget; promoted tools carry `defer_loading` like the built-in
+non-core tools. Overflow stays behind `custom_manage` (sorted by name), and
+the sync follows every catalog change live via `tools/list_changed`.
 
 ### User control (dock)
 
