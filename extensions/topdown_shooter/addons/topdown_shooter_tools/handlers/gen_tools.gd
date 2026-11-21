@@ -1585,6 +1585,10 @@ static func inspection(job: Dictionary, swap_data: Dictionary, shots: Dictionary
 	var issues: Array = []
 	for w in swap_data.get("warnings", []):
 		issues.append("swap: " + str(w))
+	var cleanup: Variant = job.get("cleanup", {})
+	if cleanup is Dictionary:
+		for w in cleanup.get("warnings", []):
+			issues.append("cleanup: " + str(w))
 	var steps: Array = job.get("steps", [])
 	for i in range(steps.size() - 1, -1, -1):
 		if steps[i].get("step") == "imported":

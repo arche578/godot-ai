@@ -178,18 +178,41 @@ def run(job, report):
     # --- 3. triangle budget --------------------------------------------------
     before = _triangles(meshes)
     if max_tris > 0 and before > max_tris:
-        ratio = max(0.02, max_tris / float(before))
-        for o in meshes:
-            _decimate(o, ratio)
+        # AI models arrive as triangle soup split at every UV seam: collapse
+        # cannot cross those cracks, so a big cut tears the surface into
+        # loose flakes. Weld coincident vertices first (UVs stay per loop).
+        lo, hi, dims = _bounds(meshes)
+        welded = sum(_weld(o, max(1e-6, max(dims) * 1e-4)) for o in meshes)
+        parts_before = sum(_loose_parts(o) for o in meshes)
         after = _triangles(meshes)
-        # Collapse can land above the target on small meshes; one more pass.
-        if after > max_tris * 1.05:
+        # At most a 10x cut per pass: one 400x collapse shreds thin parts.
+        passes = 0
+        while after > max_tris * 1.05 and passes < 6:
+            ratio = max(0.1, max_tris / float(after))
             for o in meshes:
-                _decimate(o, max(0.02, max_tris / float(after)))
-            after = _triangles(meshes)
-        report["decimated"] = {"from": before, "to": after, "budget": max_tris}
+                _decimate(o, ratio)
+            new_after = _triangles(meshes)
+            passes += 1
+            if new_after >= after:
+                break
+            after = new_after
+        parts_after = sum(_loose_parts(o) for o in meshes)
+        report["decimated"] = {
+            "from": before,
+            "to": after,
+            "budget": max_tris,
+            "passes": passes,
+            "welded_vertices": welded,
+            "loose_parts": [parts_before, parts_after],
+        }
         if after > max_tris * 1.1:
             warnings.append("triangles %d are still above the budget %d" % (after, max_tris))
+        if parts_after > max(parts_before * 1.5, parts_before + 10):
+            warnings.append(
+                "decimating %d -> %d triangles broke the model into %d loose pieces (it had %d): "
+                "it probably looks shredded; run again with a larger max_triangles (e.g. %d) "
+                "and check the preview" % (before, after, parts_after, parts_before, max_tris * 4)
+            )
 
     # --- 4. origin -----------------------------------------------------------
     lo, hi, dims = _bounds(meshes)
@@ -499,6 +522,46 @@ def _place_muzzle(meshes):
 
 
 # --- budgets -----------------------------------------------------------------------
+
+
+def _weld(o, dist):
+    """Merges vertices closer than dist. Returns how many were removed."""
+    import bmesh
+
+    bm = bmesh.new()
+    bm.from_mesh(o.data)
+    n = len(bm.verts)
+    bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=dist)
+    removed = n - len(bm.verts)
+    bm.to_mesh(o.data)
+    bm.free()
+    o.data.update()
+    return removed
+
+
+def _loose_parts(o):
+    """Connected pieces of a mesh (union-find over its edges)."""
+    me = o.data
+    n = len(me.vertices)
+    if n == 0:
+        return 0
+    parent = list(range(n))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    ev = [0] * (len(me.edges) * 2)
+    me.edges.foreach_get("vertices", ev)
+    for k in range(0, len(ev), 2):
+        a, b = find(ev[k]), find(ev[k + 1])
+        if a != b:
+            parent[a] = b
+    lv = [0] * len(me.loops)
+    me.loops.foreach_get("vertex_index", lv)
+    return len({find(v) for v in set(lv)})
 
 
 def _decimate(o, ratio):
