@@ -24,6 +24,7 @@ if [ "${1:-}" = "--remove" ]; then
   exit 0
 fi
 
+mkdir -p "$(dirname "$ADDON_LINK")" "$(dirname "$TEST_LINK")"
 ln -sfn "../../extensions/topdown_shooter/addons/topdown_shooter_tools" "$ADDON_LINK"
 ln -sfn "../../extensions/topdown_shooter/tests/test_topdown_shooter_tools.gd" "$TEST_LINK"
 
