@@ -8,6 +8,11 @@ extends Node3D
 ## Damage goes to the first node in the hit collider's ancestry that has
 ## take_damage(amount, info).
 ##
+## The muzzle usually sticks out in front of the shooter, so when the
+## shooter hugs a wall the muzzle is already on the far side of it. Every
+## shot therefore first checks the stretch from the shooter's body to the
+## muzzle; anything in that gap (a wall, a crate) takes the shot instead.
+##
 ## Free to edit: this file was copied into your project and is yours now.
 
 signal fired(ammo_left: int)
@@ -76,10 +81,13 @@ func try_fire(aim_point: Vector3) -> bool:
 			base_dir.y = 0.0
 	base_dir = base_dir.normalized()
 
+	var blocked := _muzzle_blocker(origin)
 	for _pellet in maxi(data.pellets, 1):
 		var half_spread := deg_to_rad(data.spread_degrees) * 0.5
 		var dir := base_dir.rotated(Vector3.UP, randf_range(-half_spread, half_spread))
-		if data.fire_mode == "projectile" and data.projectile_scene != null:
+		if not blocked.is_empty():
+			apply_hit(blocked.collider, blocked.position, dir)
+		elif data.fire_mode == "projectile" and data.projectile_scene != null:
 			_spawn_projectile(origin, dir)
 		else:
 			_fire_ray(origin, dir)
@@ -144,6 +152,19 @@ func _shooter_rids() -> Array[RID]:
 	if shooter != null:
 		rids.append(shooter.get_rid())
 	return rids
+
+
+## What sits between the shooter's body and the muzzle (the ray result of
+## intersect_ray), or {} when the muzzle is clear. The check starts at the
+## shooter's center, raised to the muzzle's height.
+func _muzzle_blocker(muzzle: Vector3) -> Dictionary:
+	var shooter := get_shooter() as Node3D
+	var start := shooter.global_position if shooter != null else global_position
+	start.y = muzzle.y
+	if start.distance_squared_to(muzzle) < 0.000001:
+		return {}
+	var query := PhysicsRayQueryParameters3D.create(start, muzzle, data.collision_mask, _shooter_rids())
+	return get_world_3d().direct_space_state.intersect_ray(query)
 
 
 func _muzzle_position() -> Vector3:
