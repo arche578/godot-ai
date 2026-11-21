@@ -319,7 +319,19 @@ gold_watch,금시계,valuable,epic,0.2,1500,1,sell,,80
 | Enter / Shift+Enter / Esc | 저장 / 줄바꿈 / 취소 (한글 조합 중 Enter는 조합만 끝냄) |
 
 Windows와 Linux의 Godot 편집기는 F8을 "실행 중지" 단축키로 쓰기 때문에, 편집기에서 실행한 게임에서 F8을 누르면 게임이 꺼집니다. 그래서 F9를 씁니다. 맥에서 F8·F9는 기본이 미디어 키라 fn+F9여야 하므로 Cmd+N이 편합니다. 다른 키를 쓰려면 입력 맵에
-`playtest_note` 액션을 만들면 그 키만 씁니다. 종류(버그·밸런스·레벨/맵·아이디어·기타)는 창에서 고릅니다.
+`playtest_note` 액션을 만들면 그 키만 씁니다. 종류는 창에서 고릅니다. 기본 종류는 버그(`bug`), 밸런스(`balance`), 레벨/맵(`level`),
+그래픽(`graphics`), 스타일·아트 컨셉(`art_style`), UI(`ui`), 캐릭터(`character`), 특수효과(`vfx`),
+사운드(`sound`), 게임 경험(`experience`), 아이디어(`idea`), 기타(`other`)입니다.
+
+종류 목록은 프로젝트 설정 `playtest_notes/categories`로 바꿀 수 있습니다. 값은 순서대로
+`{"id", "label", "color"}` 사전의 배열이고(`color`는 `#ff8800` 같은 문자열이나 Color, 생략하면 회색),
+유효한 항목이 하나도 없으면 기본 목록을 씁니다. 게임 창의 드롭다운과 편집기 핀 색이 모두 이 설정을 따르고,
+목록에 없는 종류의 예전 메모도 회색 핀으로 계속 보입니다. `op="list"` 결과의 `categories`가 지금 쓰는 id입니다.
+
+```ini
+[playtest_notes]
+categories=[{"id": "bug", "label": "버그", "color": "#f24033"}, {"id": "camera", "label": "카메라"}]
+```
 
 메모 하나는 `res://playtest_notes/<id>.json`과 `<id>.png`입니다(내보낸 게임에서는 `user://playtest_notes/`).
 폴더에 `.gdignore`가 생겨 에디터가 스크린샷을 가져오지 않습니다. JSON에는 `text`, `category`, `status`,

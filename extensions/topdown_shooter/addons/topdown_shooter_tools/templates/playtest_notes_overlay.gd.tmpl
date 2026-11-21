@@ -21,15 +21,25 @@ const NOTES_DIR := "res://playtest_notes/"
 const EXPORT_NOTES_DIR := "user://playtest_notes/"
 const ACTION := &"playtest_note"
 const VERSION := 1
-const CATEGORIES := ["bug", "balance", "level", "idea", "other"]
-const CATEGORY_LABELS := {"bug": "버그", "balance": "밸런스", "level": "레벨/맵", "idea": "아이디어", "other": "기타"}
-const CATEGORY_COLORS := {
-	"bug": Color(0.95, 0.25, 0.2),
-	"balance": Color(0.95, 0.7, 0.15),
-	"level": Color(0.3, 0.7, 1.0),
-	"idea": Color(0.45, 0.85, 0.4),
-	"other": Color(0.8, 0.8, 0.8),
-}
+## Categories offered in the note window, in order: [id, label, color].
+## Override them in Project Settings with playtest_notes/categories, an Array
+## of {"id": "bug", "label": "버그", "color": "#f24033"} (color optional).
+const CATEGORIES_SETTING := "playtest_notes/categories"
+const DEFAULT_CATEGORIES := [
+	["bug", "버그", Color(0.95, 0.25, 0.2)],
+	["balance", "밸런스", Color(0.95, 0.7, 0.15)],
+	["level", "레벨/맵", Color(0.3, 0.7, 1.0)],
+	["graphics", "그래픽", Color(0.55, 0.5, 1.0)],
+	["art_style", "스타일(아트 컨셉)", Color(0.95, 0.45, 0.75)],
+	["ui", "UI", Color(0.2, 0.85, 0.8)],
+	["character", "캐릭터", Color(0.95, 0.5, 0.25)],
+	["vfx", "특수효과", Color(0.8, 0.95, 0.3)],
+	["sound", "사운드", Color(0.7, 0.4, 0.25)],
+	["experience", "게임 경험", Color(0.3, 0.55, 0.35)],
+	["idea", "아이디어", Color(0.45, 0.85, 0.4)],
+	["other", "기타", Color(0.8, 0.8, 0.8)],
+]
+const FALLBACK_COLOR := Color(0.8, 0.8, 0.8)
 ## Notes are only taken in debug builds (editor runs and debug exports).
 const ENABLED_IN_RELEASE := false
 
@@ -193,7 +203,7 @@ func _close(save: bool) -> void:
 		return
 	var saved := {}
 	if save:
-		saved = save_note(_text.text, CATEGORIES[maxi(_category.selected, 0)], _use_player)
+		saved = save_note(_text.text, str(_category.get_item_metadata(maxi(_category.selected, 0))), _use_player)
 	_open = false
 	_panel.visible = false
 	_text.release_focus()
@@ -303,6 +313,46 @@ func marker_position(use_player: bool) -> Variant:
 	if _context.has("cursor_position"):
 		return _context.cursor_position
 	return _context.get("player_position", null)
+
+
+## The categories in use: [{id, label, color}], from the project setting when
+## it holds at least one valid entry, otherwise DEFAULT_CATEGORIES. Entries
+## without a usable id, and repeated ids, are skipped.
+static func categories() -> Array:
+	var out: Array = []
+	var custom: Variant = ProjectSettings.get_setting(CATEGORIES_SETTING, null)
+	if custom is Array:
+		var seen := {}
+		for entry in custom:
+			if not entry is Dictionary:
+				continue
+			var id := str(entry.get("id", "")).strip_edges()
+			if id.is_empty() or seen.has(id):
+				continue
+			seen[id] = true
+			var label := str(entry.get("label", "")).strip_edges()
+			out.append({"id": id, "label": label if not label.is_empty() else id, "color": parse_color(entry.get("color", null))})
+	if out.is_empty():
+		for c in DEFAULT_CATEGORIES:
+			out.append({"id": c[0], "label": c[1], "color": c[2]})
+	return out
+
+
+static func parse_color(value: Variant) -> Color:
+	if value is Color:
+		return value
+	if value is String and Color.html_is_valid(value):
+		return Color.html(value)
+	return FALLBACK_COLOR
+
+
+## Pin color for a category id; unknown ids (older notes, removed
+## categories) get FALLBACK_COLOR.
+static func category_color(id: String) -> Color:
+	for c in categories():
+		if c.id == id:
+			return c.color
+	return FALLBACK_COLOR
 
 
 # --- save --------------------------------------------------------------------------
@@ -450,8 +500,9 @@ func _build_ui() -> void:
 	cat_label.text = "종류"
 	row.add_child(cat_label)
 	_category = OptionButton.new()
-	for c in CATEGORIES:
-		_category.add_item(CATEGORY_LABELS[c])
+	for c in categories():
+		_category.add_item(c.label)
+		_category.set_item_metadata(_category.item_count - 1, c.id)
 	_category.focus_mode = Control.FOCUS_NONE
 	row.add_child(_category)
 
@@ -543,7 +594,7 @@ func _show_pins() -> void:
 	for note in _existing_notes(str(_context.get("scene", ""))):
 		var at: Variant = _vec(note.get("position", null))
 		if at != null:
-			_pins.add_child(make_pin(at, CATEGORY_COLORS.get(note.get("category", "other"), Color.WHITE), str(note.get("text", "")).left(30), 0.6))
+			_pins.add_child(make_pin(at, category_color(str(note.get("category", "other"))), str(note.get("text", "")).left(30), 0.6))
 	var here: Variant = _vec(marker_position(_use_player))
 	if here != null:
 		_pins.add_child(make_pin(here, Color(1, 0.85, 0.2), "새 메모", 1.0))

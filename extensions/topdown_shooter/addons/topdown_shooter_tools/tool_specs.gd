@@ -427,7 +427,7 @@ static func definitions() -> Array[Dictionary]:
 					"ids": _desc({"type": "array", "items": _STR, "maxItems": 200}, "Several note ids (resolve/reopen/delete)."),
 					"status": _desc({"type": "string", "enum": ["open", "resolved", "all"]}, "list/markers filter. Default open."),
 					"scene": _desc(_STR, "list/markers filter: res:// scene path, 'current' (open scene) or 'all'. Default: list all, markers current."),
-					"category": _desc({"type": "string", "enum": ["bug", "balance", "level", "idea", "other"]}, "list filter."),
+					"category": _desc(_STR, "list filter: a category id. Defaults: bug, balance, level, graphics, art_style, ui, character, vfx, sound, experience, idea, other; the project setting playtest_notes/categories can replace them (list returns the ids in use)."),
 					"limit": _desc({"type": "integer", "minimum": 1, "maximum": 500}, "list: newest N. Default 50."),
 					"resolution": _desc(_STR, "resolve: what was changed, saved in the note."),
 					"script_dir": _desc(_STR, "install: where playtest_notes_overlay.gd is copied. Default res://scripts/topdown."),
