@@ -562,7 +562,7 @@ static func _next_hint(kind: String, asset_id: String, path: String) -> String:
 		"item":
 			return "swap_placeholder target=item item_id=%s model=%s (dropped items show the model)" % [asset_id, path]
 		"character":
-			return "swap_placeholder target=player (or enemy) model=%s" % path
+			return "character_anim_setup target=player (or enemy asset_id=%s) model=%s animations=[Mixamo FBX] (retargets, swaps Body and animates it; swap_placeholder alone leaves it in T-pose)" % [asset_id, path]
 	return "swap_placeholder target=map group=Crates (or Cover/Walls) model=%s" % path
 
 

@@ -19,6 +19,8 @@ const SWAP_HANDLER_PATH := "res://addons/topdown_shooter_tools/handlers/swap_too
 const GEN_HANDLER_PATH := "res://addons/topdown_shooter_tools/handlers/gen_tools.gd"
 const ICON_HANDLER_PATH := "res://addons/topdown_shooter_tools/handlers/icon_tools.gd"
 const ENV_HANDLER_PATH := "res://addons/topdown_shooter_tools/handlers/env_tools.gd"
+const CHARACTER_HANDLER_PATH := "res://addons/topdown_shooter_tools/handlers/character_tools.gd"
+const AUDIT_HANDLER_PATH := "res://addons/topdown_shooter_tools/handlers/audit_tools.gd"
 
 const _NUM := {"type": "number"}
 const _BOOL := {"type": "boolean"}
@@ -754,6 +756,63 @@ static func definitions() -> Array[Dictionary]:
 					"apply_grid": _desc(_BOOL, "Write the suggested grid_width/grid_height and size the icon to it. Default false."),
 					"patch_ui": _desc(_BOOL, "Teach older inventory_ui.gd / hideout.gd copies to draw icons. Default true."),
 					"dry_run": _desc(_BOOL, "Report models, icon paths, grids and UI patches only. Default false."),
+				},
+			},
+		},
+		{
+			"name": "character_anim_setup",
+			"method": &"character_anim_setup",
+			"script": CHARACTER_HANDLER_PATH,
+			"deferred": true,
+			"timeout_ms": 120000,
+			"description": "Animate a player/enemy with a rigged model (Mixamo/Meshy/Tripo .fbx/.glb). Copies model and clips (Mixamo FBX: Without Skin, In Place) in, retargets both to Godot's humanoid profile (bone map guessed), roles from file names into one shared AnimationLibrary, swaps Body (swap_placeholder), adds an AnimationTree and a CharacterAnimator: speed -> idle/walk/run, AI state -> aim, died -> death, damage, fire, reload, dodge; the weapon mount follows the hand bone. Files, swap and scene: one undo step each.",
+			"schema": {
+				"type": "object",
+				"additionalProperties": false,
+				"required": ["target"],
+				"properties": {
+					"target": _desc({"type": "string", "enum": ["player", "enemy"]}, "Which character scene."),
+					"asset_id": _desc(_STR, "Character id: model folder res://assets/characters/<id>/, enemy scene res://scenes/enemies/<id>.tscn. Default player for the player."),
+					"scene": _desc(_STR, "Override the .tscn. Edited live when open."),
+					"model": _desc(_STR, "Rigged model file (~/Downloads/x.fbx, absolute or res://). Default: the rule folder's model."),
+					"animations": _desc({"type": ["array", "string"], "items": _STR}, "Animation files or folders (.fbx/.glb). Optional once the library has clips."),
+					"clips": _desc({"type": "object"}, "{role: file or clip name} when a name does not say it. Roles: idle walk run walk_back strafe_left strafe_right aim fire reload dodge hit death attack."),
+					"library": _desc(_STR, "AnimationLibrary .res. Default res://assets/animations/humanoid/humanoid.res."),
+					"anim_dir": _desc(_STR, "Where clip files are copied. Default res://assets/animations/humanoid/sources."),
+					"in_place": _desc(_BOOL, "Remove forward motion of Hips. Default true."),
+					"walk_speed": _desc(_range(0.1, 20), "m/s the walk clip shows. Default 1.6."),
+					"run_speed": _desc(_range(0.1, 40), "m/s the run clip shows. Default 4."),
+					"weapon_follow": _desc({"type": "string", "enum": ["hand_position", "hand", "none"]}, "hand_position: mount at the hand, aim keeps its turn (default). hand: also the hand's turn."),
+					"hand": _desc({"type": "string", "enum": ["right", "left"]}, "Default right."),
+					"grip_offset": _desc(_VEC3, "Weapon offset from the hand in body space (m)."),
+					"upper_body": _desc(_BOOL, "fire/reload/hit/aim move only the upper body. Default true."),
+					"swap": _desc(_BOOL, "Put the model in Body's place first. Default true."),
+					"yaw_degrees": _desc(_range(-360, 360), "Swap: turn the model."),
+					"script_dir": _desc(_STR, "Default res://scripts/topdown."),
+					"overwrite": _desc(_BOOL, "Replace a different model already in the rule folder. Default false."),
+					"overwrite_scripts": _desc(_BOOL, "Replace character_animator.gd with the template. Default false."),
+					"dry_run": _desc(_BOOL, "Report files, roles and destinations only. Default false."),
+				},
+			},
+		},
+		{
+			"name": "asset_audit",
+			"method": &"asset_audit",
+			"script": AUDIT_HANDLER_PATH,
+			"requires_writable": false,
+			"timeout_ms": 60000,
+			"description": "Read-only report of what is still blockout: visible primitive placeholder meshes per scene (character Body/Nose, weapon Model, map Walls/Cover/Crates/Floors, other), characters (capsule, model without animation, missing clips), items with no icon or model (or a missing file), and imported models over their kind's triangle/texture budget. Each finding comes with the tool that fixes it. clean=true when nothing is left.",
+			"schema": {
+				"type": "object",
+				"additionalProperties": false,
+				"properties": {
+					"checks": _desc({"type": "array", "items": {"type": "string", "enum": ["placeholders", "characters", "items", "budget"]}}, "Default all."),
+					"scenes": _desc({"type": "array", "items": _STR}, "Only these .tscn files."),
+					"dirs": _desc({"type": "array", "items": _STR}, "Folders to search for scenes. Default res:// (skips addons, .godot, asset_sources)."),
+					"database_path": _desc(_STR, "Item database. Default res://data/items/item_database.tres."),
+					"assets_dir": _desc(_STR, "Models to budget-check. Default res://assets."),
+					"library": _desc(_STR, "Animation library for clip hints. Default res://assets/animations/humanoid/humanoid.res."),
+					"max_entries": _desc({"type": "integer", "minimum": 1, "maximum": 500}, "List length cap per section. Default 40."),
 				},
 			},
 		},
