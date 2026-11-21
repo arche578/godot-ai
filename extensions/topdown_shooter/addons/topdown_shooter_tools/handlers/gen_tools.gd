@@ -44,6 +44,7 @@ const SETTING_DEFAULTS := {
 	"daily_task_limit": 20,
 	"meshy_base_url": "",
 	"tripo_base_url": "",
+	"inbox_dirs": "res://TripoModels",
 }
 const KEY_ENV := {"meshy": "MESHY_API_KEY", "tripo": "TRIPO_API_KEY"}
 const PRESET_PATH := "res://assets/style_preset.json"
@@ -55,7 +56,13 @@ const IMAGE_EXTENSIONS := ["png", "jpg", "jpeg", "webp"]
 const STAGES := ["generating", "candidates_ready", "texturing", "ready", "downloaded", "imported", "swapped", "done", "failed", "canceled"]
 ## Stages after which a new generation for the same asset_id needs overwrite.
 const ACTIVE_STAGES := ["generating", "candidates_ready", "texturing", "ready", "downloaded", "imported", "swapped"]
-const JOB_OPS := ["status", "preview", "pick", "download", "cancel", "list", "balance"]
+const JOB_OPS := ["status", "preview", "pick", "download", "cancel", "list", "balance", "inbox"]
+## Models made outside the tools (Tripo Studio through the Tripo Godot Bridge,
+## the meshy CLI, a manual download) join the pipeline with source=...
+const ADOPT_EXTENSIONS := ["glb", "gltf", "fbx", "obj", "blend"]
+const EXTERNAL_PROVIDERS := ["tripo", "meshy", "other"]
+const INBOX_LIMIT := 30
+const INBOX_DEPTH := 3
 const SWAP_TARGET_FOR_KIND := {"weapon": "weapon", "item": "item"}
 ## swap_placeholder parameters the pipeline passes through (model is filled in).
 const SWAP_KEYS := ["target", "model", "asset_id", "scene", "node_path", "map_path", "group", "name_prefix", "fit",
@@ -100,6 +107,7 @@ static func register_settings() -> void:
 		"daily_task_limit": [TYPE_INT, PROPERTY_HINT_RANGE, "0,500,1"],
 		"meshy_base_url": [TYPE_STRING, PROPERTY_HINT_NONE, ""],
 		"tripo_base_url": [TYPE_STRING, PROPERTY_HINT_NONE, ""],
+		"inbox_dirs": [TYPE_STRING, PROPERTY_HINT_NONE, ""],
 	}
 	for key in SETTING_DEFAULTS:
 		var name: String = SETTING_PREFIX + key
@@ -605,7 +613,7 @@ func _generate_async(p: Dictionary, plan: Dictionary) -> Dictionary:
 # asset_job
 # =============================================================================
 
-const JOB_KEYS := ["op", "asset_id", "job_id", "index", "render", "repick", "provider"]
+const JOB_KEYS := ["op", "asset_id", "job_id", "index", "render", "repick", "provider", "dir"]
 
 
 func asset_job(params: Dictionary, ctx = null) -> Dictionary:
@@ -619,6 +627,11 @@ func asset_job(params: Dictionary, ctx = null) -> Dictionary:
 		return Util.error(Util.INVALID_PARAMS, "'op' must be one of %s" % ", ".join(JOB_OPS))
 	if op == "list":
 		return {"data": list_jobs()}
+	if op == "inbox":
+		var dir: Variant = Util.text(params, "dir", "")
+		if Util.is_error(dir):
+			return dir
+		return {"data": inbox(String(dir))}
 	if op == "balance":
 		return _run(ctx, "", _balance_async.bind(String(params.get("provider", ""))))
 	var asset_id: Variant = Util.text(params, "asset_id", String(params.get("job_id", "")))
@@ -635,6 +648,8 @@ func asset_job(params: Dictionary, ctx = null) -> Dictionary:
 	for v in [index, render, repick]:
 		if Util.is_error(v):
 			return v
+	if job.get("mode") == "external" and op in ["pick", "download", "preview"]:
+		return Util.error(Util.INVALID_PARAMS, "'%s' was made outside these tools (source %s): there is nothing to %s. asset_pipeline asset_id=%s continues with cleanup, import and swap." % [asset_id, job.get("source", ""), op, asset_id])
 	match op:
 		"cancel":
 			return {"data": cancel_job(job)}
@@ -674,6 +689,8 @@ func _job_async(op: String, job: Dictionary, opts: Dictionary) -> Dictionary:
 
 ## Polls every unfinished task, saves candidate thumbnails, moves the stage.
 func refresh(job: Dictionary, notes: Array) -> void:
+	if job.get("mode") == "external":
+		return
 	var key: String = api_key(job.provider).key
 	if key.is_empty():
 		notes.append(missing_key_message(job.provider))
@@ -949,6 +966,8 @@ static func summarize(job: Dictionary) -> Dictionary:
 		out["pick"] = pick
 	if job.has("raw_model"):
 		out["raw_model"] = job.raw_model
+	if job.has("source"):
+		out["source"] = job.source
 	return out
 
 
@@ -978,7 +997,7 @@ static func next_hint(job: Dictionary) -> String:
 
 const PIPELINE_KEYS := ["kind", "asset_id", "prompt", "reference_image", "provider", "candidates", "texture_on_pick",
 	"target_polycount", "use_style", "database_path", "overwrite", "dry_run", "pick", "repick", "cleanup", "cleanup_options",
-	"swap", "dest_dir", "preview", "inspect", "blender_path"]
+	"swap", "dest_dir", "preview", "inspect", "blender_path", "source"]
 const PIPELINE_CONFIG_KEYS := ["cleanup", "cleanup_options", "swap", "dest_dir", "preview", "inspect", "blender_path"]
 
 
@@ -1001,6 +1020,11 @@ func asset_pipeline(params: Dictionary, ctx = null) -> Dictionary:
 	for v in [pick_index, repick]:
 		if Util.is_error(v):
 			return v
+	var source: Variant = Util.text(params, "source", "")
+	if Util.is_error(source):
+		return source
+	if not String(source).is_empty():
+		return _pipeline_adopt(params, asset_id, String(source), job, config, ctx)
 	if starting:
 		var gen_params := {}
 		for key in GENERATE_KEYS:
@@ -1033,6 +1057,157 @@ func asset_pipeline(params: Dictionary, ctx = null) -> Dictionary:
 		if not check.is_empty():
 			return check
 	return _run(ctx, asset_id, _pipeline_continue_async.bind(job, config, pick_index, ctx))
+
+
+## source=...: a model made elsewhere joins at "downloaded" and goes on to
+## cleanup, import, swap and inspection in the same call. Spends no credits.
+func _pipeline_adopt(params: Dictionary, asset_id: String, source: String, job: Variant, config: Dictionary, ctx) -> Dictionary:
+	for key in ["reference_image", "candidates", "texture_on_pick", "pick", "repick"]:
+		if params.has(key):
+			return Util.error(Util.INVALID_PARAMS, "'%s' is for generation; with 'source' the model already exists" % key)
+	var kind: Variant = Util.text(params, "kind", String(job.get("kind", "")) if job is Dictionary else "")
+	var provider: Variant = Util.text(params, "provider", "other")
+	var prompt: Variant = Util.text(params, "prompt", "")
+	var overwrite: Variant = Util.boolean(params, "overwrite", false)
+	var dry: Variant = Util.boolean(params, "dry_run", false)
+	for v in [kind, provider, prompt, overwrite, dry]:
+		if Util.is_error(v):
+			return v
+	if not kind in AssetTools.KINDS:
+		return Util.error(Util.INVALID_PARAMS, "'kind' must be one of %s" % ", ".join(AssetTools.KINDS))
+	provider = String(provider).to_lower()
+	if not provider in EXTERNAL_PROVIDERS:
+		return Util.error(Util.INVALID_PARAMS, "'provider' with 'source' labels where the model came from: one of %s" % ", ".join(EXTERNAL_PROVIDERS))
+	var src := AssetTools.resolve_source(source)
+	if not FileAccess.file_exists(src):
+		return Util.error(Util.INVALID_PARAMS, "source file not found: %s (asset_job op=inbox lists the models waiting in %s)" % [src, setting("inbox_dirs")])
+	var ext := src.get_extension().to_lower()
+	if not ext in ADOPT_EXTENSIONS:
+		return Util.error(Util.INVALID_PARAMS, "source must be one of .%s" % ", .".join(ADOPT_EXTENSIONS))
+	if ext == "blend" and not config.cleanup:
+		return Util.error(Util.INVALID_PARAMS, "a .blend source needs cleanup=true (Blender exports it)")
+	if job is Dictionary and String(job.get("stage", "")) in ACTIVE_STAGES and not overwrite:
+		if job.get("mode") == "external" and AssetTools.resolve_source(String(job.get("source", ""))) == src:
+			return _pipeline_resume_or_dry(job, config, dry, ctx)
+		return Util.error(Util.ALREADY_EXISTS, "asset '%s' already has a job (stage %s). Continue it with asset_pipeline asset_id=%s (no source), or pass overwrite=true to replace it (the old job file is kept as job_<time>.json)." % [asset_id, job.stage, asset_id])
+	var swap_check: Variant = _swap_params(kind, asset_id, config)
+	if Util.is_error(swap_check):
+		return swap_check
+	if dry:
+		return {"data": {"dry_run": true, "asset_id": asset_id, "kind": kind, "mode": "external", "provider": provider, "source": src,
+			"estimated_credits": {"total": 0, "note": "made outside these tools: nothing is charged here"},
+			"pipeline": {"cleanup": config.cleanup, "swap": swap_check if swap_check != null else "none (pass swap={target: ...} to replace a placeholder)",
+				"steps": "copy the source to %s -> %s -> asset_import -> %s -> inspection renders" % [AssetTools.work_dir(asset_id),
+					"asset_cleanup (Blender)" if config.cleanup else "(no cleanup)", "swap_placeholder" if swap_check != null else "(no swap)"]}}}
+	var adopted: Variant = adopt_job(asset_id, String(kind), String(provider), src, String(prompt))
+	if Util.is_error(adopted):
+		return adopted
+	adopted["pipeline"] = config
+	var err := save_job(adopted)
+	if not err.is_empty():
+		return Util.error(Util.INTERNAL_ERROR, err)
+	return _run(ctx, asset_id, _pipeline_continue_async.bind(adopted, config, 0, ctx))
+
+
+func _pipeline_resume_or_dry(job: Dictionary, config: Dictionary, dry: bool, ctx) -> Dictionary:
+	if dry:
+		var data := summarize(job)
+		data["dry_run"] = true
+		data["next"] = next_hint(job)
+		return {"data": data}
+	return _run(ctx, job.asset_id, _pipeline_continue_async.bind(job, config, 0, ctx))
+
+
+## A job record for a model made elsewhere. A .glb is copied next to the job
+## (the original may be moved or re-exported later); .gltf/.obj/.fbx keep
+## their side files where they are, so they are used in place.
+func adopt_job(asset_id: String, kind: String, provider: String, src: String, prompt: String) -> Variant:
+	var work := AssetTools.work_dir(asset_id)
+	var dir_err := AssetTools.ensure_sources_dir(work)
+	if not dir_err.is_empty():
+		return Util.error(Util.INTERNAL_ERROR, dir_err)
+	var raw := src
+	if src.get_extension().to_lower() == "glb":
+		raw = raw_model_path(asset_id)
+		if ProjectSettings.globalize_path(raw) != ProjectSettings.globalize_path(src):
+			var cp := DirAccess.copy_absolute(ProjectSettings.globalize_path(src), ProjectSettings.globalize_path(raw))
+			if cp != OK:
+				return Util.error(Util.INTERNAL_ERROR, "cannot copy %s: %s" % [src, error_string(cp)])
+	if load_job(asset_id) != null:
+		archive_job(asset_id)
+	var job := {
+		"version": 1,
+		"job_id": asset_id,
+		"asset_id": asset_id,
+		"kind": kind,
+		"provider": provider,
+		"mode": "external",
+		"prompt": prompt,
+		"full_prompt": prompt,
+		"source": src,
+		"raw_model": raw,
+		"estimated_credits": {"total": 0},
+		"created": Time.get_datetime_string_from_system(false, true),
+		"stage": "downloaded",
+		"candidates": [],
+		"pick": null,
+		"steps": [],
+	}
+	log_step(job, "adopt", {"source": src, "raw_model": raw})
+	return job
+
+
+## Model files waiting to be used: the Tripo Godot Bridge's export folder
+## (res://TripoModels) and any folder in Editor Settings inbox_dirs
+## (comma separated), newest first, with the job that already used each.
+func inbox(extra_dir: String) -> Dictionary:
+	var dirs: Array[String] = []
+	for d in String(setting("inbox_dirs")).split(",", false):
+		if not d.strip_edges().is_empty():
+			dirs.append(AssetTools.resolve_source(d.strip_edges()))
+	if not extra_dir.is_empty():
+		dirs.append(AssetTools.resolve_source(extra_dir))
+	var used := {}
+	for j in list_jobs().jobs:
+		var job: Variant = load_job(j.asset_id)
+		if job is Dictionary and job.has("source"):
+			used[AssetTools.resolve_source(String(job.source))] = job.asset_id
+	var files: Array = []
+	var missing: Array[String] = []
+	for d in dirs:
+		if DirAccess.open(d) == null:
+			missing.append(d)
+			continue
+		_collect_models(d, INBOX_DEPTH, files)
+	files.sort_custom(func(a, b): return int(a._mtime) > int(b._mtime))
+	var out: Array = []
+	for f in files.slice(0, INBOX_LIMIT):
+		var entry := {"path": f.path, "modified": Time.get_datetime_string_from_unix_time(int(f._mtime), true), "kb": int(f._bytes) / 1024}
+		if used.has(f.path):
+			entry["used_by"] = used[f.path]
+		out.append(entry)
+	var data := {"dirs": dirs, "models": out, "count": files.size()}
+	if not missing.is_empty():
+		data["missing_dirs"] = missing
+	data["next"] = "asset_pipeline asset_id=<id> kind=<kind> source=<path> provider=tripo|meshy|other: cleanup, import, swap, inspection. dry_run=true shows the steps first."
+	if files.is_empty():
+		data["note"] = "No models yet. Tripo: export from Tripo Studio with the DCC Bridge (Godot) button; it lands in res://TripoModels. Meshy CLI: pass its output file as source, or add its folder to Editor Settings %sinbox_dirs." % SETTING_PREFIX
+	return data
+
+
+static func _collect_models(dir_path: String, depth: int, out: Array) -> void:
+	var dir := DirAccess.open(dir_path)
+	if dir == null:
+		return
+	for name in dir.get_files():
+		if name.get_extension().to_lower() in ADOPT_EXTENSIONS:
+			var path := dir_path.path_join(name)
+			var f := FileAccess.open(path, FileAccess.READ)
+			out.append({"path": path, "_mtime": FileAccess.get_modified_time(path), "_bytes": f.get_length() if f != null else 0})
+	if depth > 0:
+		for sub in dir.get_directories():
+			if not sub.begins_with("."):
+				_collect_models(dir_path.path_join(sub), depth - 1, out)
 
 
 ## cleanup, cleanup_options, swap, dest_dir, preview, inspect, blender_path,
