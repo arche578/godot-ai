@@ -6,6 +6,11 @@
 
 요구 사항: Godot 4.7 이상, 같은 프로젝트에 Godot AI 플러그인(`addons/godot_ai`).
 
+도구 계층: 일반(general, Godot AI 원본) / 장르(genre-specific, 이 애드온) / 게임(game-specific,
+각 게임 프로젝트) 세 단계로 나눕니다. 이 애드온은 장르 계층이라 특정 게임의 아트 컨셉·세계관·고유
+명칭을 넣지 않습니다. 그런 값은 게임 프로젝트 쪽 파일(예: `res://assets/style_preset.json`)에
+둡니다. `bandage`, `grunt` 같은 예시 id는 장르 공통이라 괜찮습니다.
+
 ## 설치 (macOS, Windows 공통)
 
 1. 이 폴더의 `addons/topdown_shooter_tools/`를 게임 프로젝트의 `addons/` 아래로
@@ -42,7 +47,7 @@
 | `asset_cleanup` | 내려받거나 AI로 만든 모델(.glb/.gltf/.fbx/.obj/.blend)을 Blender로 창 없이 정리. 앞을 -Z로 돌리고(무기는 가는 총구 쪽을 찾아서), 미터 크기로 맞추고(캐릭터 키 1.8, 무기 길이 0.7, 아이템 0.3m), 원점을 바닥 중앙(무기는 손잡이)에 두고, 삼각형 예산까지 줄이고, 큰 텍스처를 줄이고, 무기에 `Muzzle` 지점을 넣어 .glb로 내보냄. 원본은 건드리지 않음. 이어서 `asset_import`까지 실행 |
 | `asset_import` | 모델을 규칙 폴더 `res://assets/<종류>s/<id>/<id>.glb`로 복사하고 임포트 설정(LOD, 탄젠트, 그림자 메시)을 써서 전체 scan 없이 임포트. 실제 크기(m)·원점·삼각형·머티리얼·텍스처 크기·뼈·애니메이션·Muzzle과 예산 초과·방향 경고를 보고하고, GUI 에디터면 미리보기 PNG. 실행 취소 한 번 |
 | `swap_placeholder` | 임시 도형을 모델로 교체. 임시 메시는 지우지 않고 숨기고, 모델은 옆의 `<이름>Skin` 노드에 넣어서 충돌·스크립트·노드 경로가 그대로. 플레이어·적(`Body`를 캡슐 키에 맞춤, 플레이어는 조준을 따라 돎), 무기(`Model` 교체, `Muzzle`을 모델 총구로), 레이드 맵(`Walls`·`Floors`는 길이 따라 타일, `Cover`·`Crates`는 상자에 맞춤), 아이템(바닥 아이템이 상자 대신 모델과 희귀도 빛). 다시 실행하면 교체, `revert=true`로 되돌림. 실행 취소 한 번 |
-| `asset_generate` | Meshy·Tripo로 3D 모델 생성 시작. 프롬프트 뒤에 종류별 문구와 공통 스타일 프리셋(`res://assets/style_preset.json`, 이끼 덮인 근미래 폐허)을 붙이고, 후보마다 작업 하나(기본 2개)를 만들고 바로 작업 번호를 돌려줌. 문장 생성은 텍스처 없는 후보만 만들고 고른 것만 텍스처를 입힘. 참고 이미지(URL·파일)도 됨. `dry_run`은 프롬프트·예상 크레딧만. 하루 작업 상한(기본 20) |
+| `asset_generate` | Meshy·Tripo로 3D 모델 생성 시작. 프롬프트 뒤에 종류별 문구와 공통 스타일 프리셋(`res://assets/style_preset.json`)을 붙이고, 후보마다 작업 하나(기본 2개)를 만들고 바로 작업 번호를 돌려줌. 문장 생성은 텍스처 없는 후보만 만들고 고른 것만 텍스처를 입힘. 참고 이미지(URL·파일)도 됨. `dry_run`은 프롬프트·예상 크레딧만. 하루 작업 상한(기본 20) |
 | `asset_job` | 생성 작업 상태(후보 미리보기 PNG 저장), 탑뷰 렌더 미리보기, 후보 고르기, 다운로드, 취소, 목록, 서비스별 남은 크레딧, 밖에서 만든 모델 대기 목록(inbox) |
 | `asset_pipeline` | 한 번에 이어 돌리기: 생성 → 후보가 나오면 **멈춰서 고르기를 기다림** → 텍스처 → 다운로드 → `asset_cleanup` → `asset_import` → `swap_placeholder` → (아이템이면) `item_icon_render` → 교체 전후 렌더와 판정. 같은 `asset_id`로 다시 부르면 이어서 진행. `source=`로 밖에서 만든 모델(Tripo Studio, meshy CLI)을 넣으면 정리 단계부터 |
 | `item_icon_render` | 인벤토리 아이콘. 아이템 3D 모델(`item.model`)을 고정 정사영 카메라·조명·투명 배경으로 렌더해 `res://assets/icons/items/<item_id>.png`(칸 수 × `cell_px`, 기본 128px)를 만들고 `item.icon`을 채움. 긴 변을 가로로 눕히고(앞은 오른쪽) 얇은 테두리를 둘러 희귀도 색 칸에서도 잘 보이게 함. 모델 모양으로 칸 수(`grid_width`/`grid_height`)를 제안하고 `apply_grid=true`면 씀. 예전 사본의 `inventory_ui.gd`·`hideout.gd`가 칸에 아이콘을 그리도록 고침. 여러 개 한 번에(`item_ids`, `all=true`). GUI 에디터 필요(`dry_run`은 어디서나). 실행 취소 한 번 |
@@ -535,7 +540,7 @@ API 크레딧 없이 웹 크레딧이나 CLI로 만든 모델도 같은 파이�
 | 항목 | 내용 |
 |---|---|
 | 작업 기록 | `res://asset_sources/<asset_id>/job.json`: 서비스, 프롬프트, 작업 번호, 후보, 고른 것, 단계별 기록. 중간에 끊겨도 같은 `asset_id`로 이어서 진행. 새로 시작하면(`overwrite=true`) 이전 기록은 `job_<시각>.json`으로 남음 |
-| 스타일 프리셋 | 처음 생성할 때 `res://assets/style_preset.json`이 생김. `style`(공통 문구), `texture_style`, `negative`(Tripo만), `blocked_terms`(프롬프트에 있으면 거절), 종류별 문구와 삼각형 예산, 서비스별 추가 옵션(`provider_options`), 예상 크레딧 표(`credits`)를 고칠 수 있음. 기존 게임의 캐릭터·맵·고유 디자인을 따라 하지 않는 오리지널 디자인이 원칙 |
+| 스타일 프리셋 | 처음 생성할 때 `res://assets/style_preset.json`이 생김. `style`(공통 문구), `texture_style`, `negative`(Tripo만), `blocked_terms`(프롬프트에 있으면 거절), 종류별 문구와 삼각형 예산, 서비스별 추가 옵션(`provider_options`), 예상 크레딧 표(`credits`)를 고칠 수 있음. 기존 게임의 캐릭터·맵·고유 디자인을 따라 하지 않는 오리지널 디자인이 원칙. 애드온에는 중립 기본값만 들어 있고, 게임의 아트 스타일은 그 게임 프로젝트의 `style_preset.json`에서 정함 |
 | 크레딧 | 예상값(2026년 11월 가격표): Meshy 문장 후보 20, 텍스처 10, 이미지 후보 30. Tripo 문장 후보 10, 텍스처 10, 이미지 후보 30. 실제 사용량은 작업이 끝나면 기록에 남음. 실패한 작업은 서비스가 돌려줌 |
 | 하루 상한 | 후보 하나, 텍스처 한 번이 각각 1건. 편집기 데이터 폴더에 날짜별로 세므로 모든 프로젝트에 함께 적용 |
 | 교체 | 무기는 `scenes/weapons/<id>.tscn`, 아이템은 같은 id의 아이템이 기본. 캐릭터·프랍은 `swap={"target": "enemy"}`, `swap={"target": "map", "group": "Crates"}`처럼 지정. `swap=false`면 가져오기까지만 |
