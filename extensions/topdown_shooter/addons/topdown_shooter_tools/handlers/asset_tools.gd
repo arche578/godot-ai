@@ -888,6 +888,17 @@ func render_node(model: Node3D, png_path: String, stop: int) -> Variant:
 	e.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	e.ambient_light_color = Color(0.75, 0.78, 0.8)
 	e.ambient_light_energy = 0.6
+	## Metal reflects its surroundings, not ambient color: with nothing to
+	## reflect, metallic models (common from AI generators) render near black.
+	var sky_mat := ProceduralSkyMaterial.new()
+	sky_mat.sky_top_color = Color(0.62, 0.68, 0.74)
+	sky_mat.sky_horizon_color = Color(0.78, 0.8, 0.82)
+	sky_mat.ground_bottom_color = Color(0.3, 0.31, 0.3)
+	sky_mat.ground_horizon_color = Color(0.6, 0.62, 0.62)
+	var sky := Sky.new()
+	sky.sky_material = sky_mat
+	e.sky = sky
+	e.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
 	env.environment = e
 	vp.add_child(env)
 	var frames := [0]

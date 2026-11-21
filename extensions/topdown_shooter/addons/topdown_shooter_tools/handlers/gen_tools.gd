@@ -1323,6 +1323,7 @@ func _pipeline_continue_async(job: Dictionary, config: Dictionary, pick_index: i
 	if job.stage == "downloaded":
 		if config.cleanup and deadline > 0 and deadline - Time.get_ticks_msec() < CLEANUP_BUDGET_MSEC:
 			return _pipeline_reply(job, notes, report, "Downloaded. Call asset_pipeline asset_id=%s again for Blender cleanup and import (it needs a fresh call's full time)." % job.asset_id)
+		await _shoot_before(job, config, deadline)
 		var imp: Dictionary = await _cleanup_and_import(job, config, ctx)
 		report["import"] = imp
 		if imp.has("error"):
@@ -1440,7 +1441,10 @@ func _swap_and_inspect(job: Dictionary, swap: Dictionary, config: Dictionary, de
 	if config.inspect:
 		inspect_scene = _inspect_target(params)
 	var shots := {}
-	if inspect_scene != "none":
+	if job.has("inspect_before"):
+		shots["before"] = job.inspect_before
+		job.erase("inspect_before")
+	elif inspect_scene != "none":
 		shots["before"] = await _shot(inspect_scene, AssetTools.work_dir(job.asset_id) + "/inspect_before.png", deadline)
 	var result: Dictionary = SwapTools.new().swap_placeholder(params)
 	if Util.is_error(result):
@@ -1454,6 +1458,22 @@ func _swap_and_inspect(job: Dictionary, swap: Dictionary, config: Dictionary, de
 			shots["after"] = await _shot(inspect_scene, AssetTools.work_dir(job.asset_id) + "/inspect_after.png", deadline)
 		out["inspection"] = inspection(job, result.data, shots)
 	return out
+
+
+## The "before" render is taken ahead of the import: when the scene already
+## uses res://assets/<kind>s/<id>/<id>.glb (an earlier swap), the import
+## overwrites that file and a later "before" would show the new model.
+func _shoot_before(job: Dictionary, config: Dictionary, deadline: int) -> void:
+	job.erase("inspect_before")
+	if not config.inspect:
+		return
+	var swap: Variant = _swap_params(job.kind, job.asset_id, config)
+	if not swap is Dictionary:
+		return
+	var scene := _inspect_target(swap)
+	if scene == "none":
+		return
+	job["inspect_before"] = await _shot(scene, AssetTools.work_dir(job.asset_id) + "/inspect_before.png", deadline)
 
 
 ## The scene file to render before and after, "" for the editor's 3D
