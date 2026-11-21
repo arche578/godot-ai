@@ -3036,6 +3036,69 @@ func test_asset_import_copies_imports_and_reports() -> void:
 	assert_false(FileAccess.file_exists(dest), "undo removes the copy")
 
 
+func test_asset_stale_textures_only_from_records() -> void:
+	var dir := "res://assets/props/crate"
+	var record := {"asset_id": "crate", "history": [
+		{"step": "import", "dest": dir + "/crate.gltf", "files": [dir + "/crate.gltf", dir + "/crate.bin", dir + "/wood.jpg", dir + "/tex/metal.webp", dir + "/../x.png", "res://assets/props/other/o.png"]},
+		{"step": "report", "path": dir + "/crate.gltf", "textures": [{"name": "crate_Albedo.png", "size": [4, 4]}, {"name": "Albedo", "size": [4, 4]}, {"name": "a/b.png"}]},
+		{"step": "report", "path": dir + "/crate.glb", "texture_files": [dir + "/crate_0.png", dir + "/crate_0.png"]},
+		{"step": "cleanup", "files": [dir + "/cleanup.png"]},
+		"junk",
+	]}
+	var stale := AssetTools.stale_texture_files(record, dir, [dir + "/crate_0.png"])
+	assert_eq(stale, [dir + "/wood.jpg", dir + "/tex/metal.webp", dir + "/crate_Albedo.png"], "recorded textures in the folder, minus the ones in use: %s" % str(stale))
+	assert_eq(AssetTools.stale_texture_files(null, dir, []), [], "no record, nothing to remove")
+	assert_eq(AssetTools.stale_texture_files({"history": "x"}, dir, []), [])
+
+
+func test_asset_overwrite_removes_old_textures() -> void:
+	var id := ASSET_PREFIX + "retex"
+	var params := {"kind": "prop", "asset_id": id, "dest_dir": ASSET_KNOWN_DIR, "preview": false, "generate_lods": false}
+	var first_src := _export_glb(_box_model(Vector3(1.0, 0.6, 0.8), Vector3(0, 0.3, 0)), ProjectSettings.globalize_path(WORK_DIR + "/src/retex_a.glb"))
+	var first := _assets.asset_import(params.merged({"source": first_src}))
+	assert_has_key(first, "data", str(first))
+	assert_false(first.data.has("removed_old_textures"), "first import removes nothing")
+	var record: Variant = AssetTools.read_json(AssetTools.work_dir(id) + "/asset.json")
+	assert_true(record.history.any(func(e): return e.step == "import" and e.get("files") == [ASSET_KNOWN_DIR + "/%s.glb" % id]), "import records the files it wrote")
+
+	## An earlier run's texture (as a .gltf import records it), its .import,
+	## and a texture the user put there by hand.
+	var old_tex := ASSET_KNOWN_DIR + "/%s_old.jpg" % id
+	var mine := ASSET_KNOWN_DIR + "/%s_mine.png" % id
+	var img := Image.create(4, 4, false, Image.FORMAT_RGB8)
+	img.fill(Color.RED)
+	assert_eq(img.save_jpg(ProjectSettings.globalize_path(old_tex)), OK)
+	assert_eq(img.save_png(ProjectSettings.globalize_path(mine)), OK)
+	var cfg := FileAccess.open(old_tex + ".import", FileAccess.WRITE)
+	cfg.store_string("[remap]\n\nimporter=\"texture\"\ntype=\"CompressedTexture2D\"\n")
+	cfg.close()
+	record.history.append({"step": "import", "dest": ASSET_KNOWN_DIR + "/%s.gltf" % id, "files": [ASSET_KNOWN_DIR + "/%s.gltf" % id, old_tex]})
+	var f := FileAccess.open(AssetTools.work_dir(id) + "/asset.json", FileAccess.WRITE)
+	f.store_string(JSON.stringify(record))
+	f.close()
+
+	var second_src := _export_glb(_box_model(Vector3(1.0, 0.6, 0.8), Vector3(0, 0.3, 0)), ProjectSettings.globalize_path(WORK_DIR + "/src/retex_b.glb"))
+	var again := _assets.asset_import(params.merged({"source": second_src, "overwrite": true}))
+	assert_has_key(again, "data", str(again))
+	assert_eq(again.data.get("removed_old_textures"), [old_tex], "the recorded old texture goes: %s" % str(again.data))
+	assert_false(FileAccess.file_exists(old_tex), "old texture deleted")
+	assert_false(FileAccess.file_exists(old_tex + ".import"), "its .import deleted")
+	assert_true(FileAccess.file_exists(mine), "a file no record names stays")
+	record = AssetTools.read_json(AssetTools.work_dir(id) + "/asset.json")
+	assert_true(record.history.back().has("texture_files"), "report records the textures in use")
+
+	assert_true(_global_ur().undo(), "one undo step")
+	assert_true(FileAccess.file_exists(old_tex), "undo brings the old texture back")
+	assert_true(FileAccess.file_exists(old_tex + ".import"), "and its .import")
+	assert_true(_global_ur().redo(), "redo")
+	assert_false(FileAccess.file_exists(old_tex), "redo deletes it again")
+	assert_true(FileAccess.file_exists(mine), "the hand-made file still stays")
+	assert_true(_global_ur().undo(), "undo the overwrite (textures and model)")
+	assert_true(_global_ur().undo(), "the overwrite's copy step (already restored)")
+	assert_true(_global_ur().undo(), "undo the first import")
+	assert_false(FileAccess.file_exists(ASSET_KNOWN_DIR + "/%s.glb" % id), "undo removes the copy")
+
+
 func test_asset_inspect_warns_over_budget_and_bad_origin() -> void:
 	var path := _save_model(_box_model(Vector3(0.1, 0.12, 0.9), Vector3(0, 0, 0)), MODEL_DIR + "/sideways.tscn")
 	var info := AssetTools.inspect_model(path, "item")
