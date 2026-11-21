@@ -880,6 +880,33 @@ func render_node(model: Node3D, png_path: String, stop: int) -> Variant:
 	cam.look_at_from_position(center + dir * dist, center, Vector3.UP)
 	cam.near = maxf(0.01, dist - radius * 2.0)
 	cam.far = dist + radius * 4.0
+	add_studio(vp)
+	var frames := [0]
+	var count := func() -> void: frames[0] += 1
+	RenderingServer.frame_post_draw.connect(count)
+	## The editor (low processor mode) only draws when something asks.
+	var base := EditorInterface.get_base_control()
+	while frames[0] < 3 and Time.get_ticks_msec() < stop:
+		base.queue_redraw()
+		await tree.create_timer(0.05).timeout
+	RenderingServer.frame_post_draw.disconnect(count)
+	if frames[0] < 3:
+		vp.queue_free()
+		return "skipped (the editor window is not drawing; bring Godot to the front and call asset_import inspect_only=true)"
+	var image := vp.get_texture().get_image()
+	vp.queue_free()
+	if image == null or image.is_empty():
+		return "skipped (renderer returned no image)"
+	ensure_sources_dir(png_path.get_base_dir())
+	var err := image.save_png(png_path)
+	if err != OK:
+		return "skipped (cannot save %s: %s)" % [png_path, error_string(err)]
+	return {"path": png_path, "absolute_path": ProjectSettings.globalize_path(png_path)}
+
+
+## A sun, soft ambient light and a gray sky for reflections (no visible
+## background: the viewport is transparent). Shared by previews and icons.
+static func add_studio(vp: SubViewport) -> void:
 	var sun := DirectionalLight3D.new()
 	vp.add_child(sun)
 	sun.look_at_from_position(Vector3(2, 4, 3), Vector3.ZERO, Vector3.UP)
@@ -906,27 +933,6 @@ func render_node(model: Node3D, png_path: String, stop: int) -> Variant:
 	e.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
 	env.environment = e
 	vp.add_child(env)
-	var frames := [0]
-	var count := func() -> void: frames[0] += 1
-	RenderingServer.frame_post_draw.connect(count)
-	## The editor (low processor mode) only draws when something asks.
-	var base := EditorInterface.get_base_control()
-	while frames[0] < 3 and Time.get_ticks_msec() < stop:
-		base.queue_redraw()
-		await tree.create_timer(0.05).timeout
-	RenderingServer.frame_post_draw.disconnect(count)
-	if frames[0] < 3:
-		vp.queue_free()
-		return "skipped (the editor window is not drawing; bring Godot to the front and call asset_import inspect_only=true)"
-	var image := vp.get_texture().get_image()
-	vp.queue_free()
-	if image == null or image.is_empty():
-		return "skipped (renderer returned no image)"
-	ensure_sources_dir(png_path.get_base_dir())
-	var err := image.save_png(png_path)
-	if err != OK:
-		return "skipped (cannot save %s: %s)" % [png_path, error_string(err)]
-	return {"path": png_path, "absolute_path": ProjectSettings.globalize_path(png_path)}
 
 
 # =============================================================================

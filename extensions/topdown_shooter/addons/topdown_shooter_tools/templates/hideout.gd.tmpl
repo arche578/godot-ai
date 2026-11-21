@@ -640,6 +640,25 @@ class GridPane extends Control:
 		var border := color
 		border.a = alpha
 		canvas.draw_rect(rect, border, false, 2.0)
+		# --- item icon (item_icon_render) ---
+		var icon: Texture2D = e.item.get("icon") as Texture2D if e.item != null and "icon" in e.item else null
+		if icon != null:
+			var base := Vector2i(maxi(1, int(e.item.get("grid_width"))), maxi(1, int(e.item.get("grid_height"))))
+			var turned := size != base and size == Vector2i(base.y, base.x)
+			var box := rect.grow(-3.0)
+			var native := Vector2(icon.get_size())
+			var foot := Vector2(native.y, native.x) if turned else native
+			var k := minf(box.size.x / maxf(1.0, foot.x), box.size.y / maxf(1.0, foot.y))
+			var tint := Color(1, 1, 1, alpha)
+			if turned:
+				canvas.draw_set_transform(box.get_center(), PI * 0.5)
+				canvas.draw_texture_rect(icon, Rect2(-native * k * 0.5, native * k), false, tint)
+				canvas.draw_set_transform(Vector2.ZERO)
+			else:
+				canvas.draw_texture_rect(icon, Rect2(box.get_center() - foot * k * 0.5, foot * k), false, tint)
+			## A dark strip so the name stays readable over the picture.
+			canvas.draw_rect(Rect2(rect.position, Vector2(rect.size.x, 18.0)), Color(0, 0, 0, 0.45 * alpha))
+		# --- end item icon ---
 		var font_size := 12 if cell_px >= 40 else 10
 		var text_width := rect.size.x - 8
 		canvas.draw_multiline_string(font, rect.position + Vector2(4, 4 + font_size), hideout_node.label_for(e.item, 1), HORIZONTAL_ALIGNMENT_LEFT, text_width, font_size, 2, Color(1, 1, 1, alpha))
