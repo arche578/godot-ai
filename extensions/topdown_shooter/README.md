@@ -12,16 +12,16 @@
    복사합니다. 결과: `<게임 프로젝트>/addons/topdown_shooter_tools/plugin.cfg`
 2. Godot에서 **프로젝트 > 프로젝트 설정 > 플러그인**을 열고 `Godot AI`와
    `Top-down Shooter Tools`를 둘 다 켭니다.
-3. Godot AI 독의 **Tools** 탭에 도구 18개가 보이면 끝입니다. Claude Code나 Claude
+3. Godot AI 독의 **Tools** 탭에 도구 19개가 보이면 끝입니다. Claude Code나 Claude
    데스크톱에는 `custom_topdown_camera_setup`, `custom_player_controller_scaffold`,
    `custom_weapon_create`, `custom_combat_feedback_setup`, `custom_enemy_ai_scaffold`, `custom_item_db_import`,
    `custom_loot_table_edit`, `custom_inventory_ui_scaffold`, `custom_raid_map_blockout`,
    `custom_raid_playtest`, `custom_playtest_notes`, `custom_hideout_scaffold`,
    `custom_asset_cleanup`, `custom_asset_import`, `custom_swap_placeholder`,
-   `custom_asset_generate`, `custom_asset_job`, `custom_asset_pipeline`이라는
-   이름으로 바로 나타납니다(승격 도구). 도구 목록이
-   갱신되지 않는 클라이언트라면 `custom_manage(op="invoke", name=...)`로도 부를
-   수 있습니다.
+   `custom_asset_generate`, `custom_asset_job`, `custom_asset_pipeline`,
+   `custom_item_icon_render`라는 이름으로 나타납니다(승격 도구). 다만 Godot AI 서버가
+   승격 도구를 이름순 8개까지만 등록하므로, 나머지는
+   `custom_manage(op="invoke", params={"tool_name": ..., "params": {...}})`로 부릅니다.
 
 ## 도구
 
@@ -44,7 +44,8 @@
 | `swap_placeholder` | 임시 도형을 모델로 교체. 임시 메시는 지우지 않고 숨기고, 모델은 옆의 `<이름>Skin` 노드에 넣어서 충돌·스크립트·노드 경로가 그대로. 플레이어·적(`Body`를 캡슐 키에 맞춤, 플레이어는 조준을 따라 돎), 무기(`Model` 교체, `Muzzle`을 모델 총구로), 레이드 맵(`Walls`·`Floors`는 길이 따라 타일, `Cover`·`Crates`는 상자에 맞춤), 아이템(바닥 아이템이 상자 대신 모델과 희귀도 빛). 다시 실행하면 교체, `revert=true`로 되돌림. 실행 취소 한 번 |
 | `asset_generate` | Meshy·Tripo로 3D 모델 생성 시작. 프롬프트 뒤에 종류별 문구와 공통 스타일 프리셋(`res://assets/style_preset.json`, 이끼 덮인 근미래 폐허)을 붙이고, 후보마다 작업 하나(기본 2개)를 만들고 바로 작업 번호를 돌려줌. 문장 생성은 텍스처 없는 후보만 만들고 고른 것만 텍스처를 입힘. 참고 이미지(URL·파일)도 됨. `dry_run`은 프롬프트·예상 크레딧만. 하루 작업 상한(기본 20) |
 | `asset_job` | 생성 작업 상태(후보 미리보기 PNG 저장), 탑뷰 렌더 미리보기, 후보 고르기, 다운로드, 취소, 목록, 서비스별 남은 크레딧, 밖에서 만든 모델 대기 목록(inbox) |
-| `asset_pipeline` | 한 번에 이어 돌리기: 생성 → 후보가 나오면 **멈춰서 고르기를 기다림** → 텍스처 → 다운로드 → `asset_cleanup` → `asset_import` → `swap_placeholder` → 교체 전후 렌더와 판정. 같은 `asset_id`로 다시 부르면 이어서 진행. `source=`로 밖에서 만든 모델(Tripo Studio, meshy CLI)을 넣으면 정리 단계부터 |
+| `asset_pipeline` | 한 번에 이어 돌리기: 생성 → 후보가 나오면 **멈춰서 고르기를 기다림** → 텍스처 → 다운로드 → `asset_cleanup` → `asset_import` → `swap_placeholder` → (아이템이면) `item_icon_render` → 교체 전후 렌더와 판정. 같은 `asset_id`로 다시 부르면 이어서 진행. `source=`로 밖에서 만든 모델(Tripo Studio, meshy CLI)을 넣으면 정리 단계부터 |
+| `item_icon_render` | 인벤토리 아이콘. 아이템 3D 모델(`item.model`)을 고정 정사영 카메라·조명·투명 배경으로 렌더해 `res://assets/icons/items/<item_id>.png`(칸 수 × `cell_px`, 기본 128px)를 만들고 `item.icon`을 채움. 긴 변을 가로로 눕히고(앞은 오른쪽) 얇은 테두리를 둘러 희귀도 색 칸에서도 잘 보이게 함. 모델 모양으로 칸 수(`grid_width`/`grid_height`)를 제안하고 `apply_grid=true`면 씀. 예전 사본의 `inventory_ui.gd`·`hideout.gd`가 칸에 아이콘을 그리도록 고침. 여러 개 한 번에(`item_ids`, `all=true`). GUI 에디터 필요(`dry_run`은 어디서나). 실행 취소 한 번 |
 
 Claude에게는 이렇게 말하면 됩니다.
 
@@ -70,6 +71,8 @@ Claude에게는 이렇게 말하면 됩니다.
 > 은신처를 걸어 다니는 3D 맵으로 만들어 줘. 방은 16x12, 출격 문은 2초.
 
 > 구급상자 아이템 모델 만들어 줘. 먼저 dry_run으로 프롬프트랑 크레딧 보여 주고, 후보 나오면 보여 줘.
+
+> 모델 있는 아이템 전부 인벤토리 아이콘 만들어 줘. 칸 수 제안도 적용해 줘.
 
 > ~/Downloads/rifle.glb를 smg 무기로 정리해서 넣고 smg 씬의 상자를 바꿔 줘. 레이드 맵 상자는 crate 모델로.
 
@@ -366,6 +369,8 @@ res://scenes/enemies/    <enemy_id>.tscn  (스크립트는 scripts/topdown/enemy
 res://data/weapons/      <weapon_id>.tres
 res://data/items/        <item_id>.tres, item_database.tres
 res://data/loot/         <table_id>.tres
+res://assets/<kind>s/    <id>/<id>.glb  (asset_import, asset_cleanup)
+res://assets/icons/items/ <item_id>.png  (item_icon_render)
 res://scenes/            hideout.tscn, hideout_map.tscn (style=map)
 user://hideout/          save.json (게임이 씀)
 ```
@@ -471,6 +476,11 @@ extensions/topdown_shooter/script/link-test-project --remove
   예전 사본의 `item_data.gd`·`loot_pickup.gd`는 `swap_placeholder target=item`이 짧게
   고쳐 줍니다(손으로 많이 고친 파일은 그대로 두고 알려 줌). 바닥 아이템은 모델을
   `loot_pickup.model_size`(기본 0.45m)에 맞춰 띄우고 밑에 희귀도 색 빛을 깝니다.
+- 아이콘: `item_icon_render item_ids=["medkit"]`(파이프라인은 아이템 교체 뒤 자동으로 부름,
+  `icon=false`로 끄거나 `icon={cell_px: 96, apply_grid: true}`처럼 설정). 각도는 `pitch_degrees`(기본
+  30, 0이면 옆모습), `yaw_degrees`(기본 25, 긴 아이콘일수록 덜 돌림). 칸이 세로로 길면(예: 1x2)
+  가로로 렌더한 뒤 그림을 세워 저장합니다. 인벤토리에서 아이템을 돌리면 아이콘도 같이 돕니다.
+  인벤토리·창고 칸은 희귀도 색 바탕 위에 아이콘을 그리고, 이름은 위쪽 어두운 띠에 씁니다.
 
 
 ## AI 모델 생성

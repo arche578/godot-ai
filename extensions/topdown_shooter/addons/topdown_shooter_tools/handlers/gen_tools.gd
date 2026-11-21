@@ -32,6 +32,7 @@ extends RefCounted
 const Util := preload("res://addons/topdown_shooter_tools/handlers/scaffold_util.gd")
 const AssetTools := preload("res://addons/topdown_shooter_tools/handlers/asset_tools.gd")
 const SwapTools := preload("res://addons/topdown_shooter_tools/handlers/swap_tools.gd")
+const IconTools := preload("res://addons/topdown_shooter_tools/handlers/icon_tools.gd")
 const Providers := preload("res://addons/topdown_shooter_tools/handlers/gen_providers.gd")
 const GenHttp := preload("res://addons/topdown_shooter_tools/handlers/gen_http.gd")
 
@@ -997,8 +998,8 @@ static func next_hint(job: Dictionary) -> String:
 
 const PIPELINE_KEYS := ["kind", "asset_id", "prompt", "reference_image", "provider", "candidates", "texture_on_pick",
 	"target_polycount", "use_style", "database_path", "overwrite", "dry_run", "pick", "repick", "cleanup", "cleanup_options",
-	"swap", "dest_dir", "preview", "inspect", "blender_path", "source"]
-const PIPELINE_CONFIG_KEYS := ["cleanup", "cleanup_options", "swap", "dest_dir", "preview", "inspect", "blender_path"]
+	"swap", "dest_dir", "preview", "inspect", "blender_path", "source", "icon"]
+const PIPELINE_CONFIG_KEYS := ["cleanup", "cleanup_options", "swap", "dest_dir", "preview", "inspect", "blender_path", "icon"]
 
 
 func asset_pipeline(params: Dictionary, ctx = null) -> Dictionary:
@@ -1231,8 +1232,15 @@ func read_pipeline_config(params: Dictionary, job: Variant) -> Variant:
 	var swap: Variant = params.get("swap", saved.get("swap", null))
 	if swap != null and not (swap is Dictionary or swap is bool):
 		return Util.error(Util.INVALID_PARAMS, "'swap' must be false or a swap_placeholder object (target, scene, group, ...)")
+	var icon: Variant = params.get("icon", saved.get("icon", true))
+	if not (icon is Dictionary or icon is bool):
+		return Util.error(Util.INVALID_PARAMS, "'icon' must be true, false or an object of item_icon_render parameters (cell_px, apply_grid, ...)")
+	if icon is Dictionary:
+		for key in icon:
+			if key in ["item_id", "item_ids", "all", "model", "dry_run"]:
+				return Util.error(Util.INVALID_PARAMS, "icon.%s is set by the pipeline" % key)
 	return {"cleanup": cleanup, "cleanup_options": cleanup_options, "swap": swap, "dest_dir": dest_dir, "preview": preview,
-		"inspect": inspect, "blender_path": blender}
+		"inspect": inspect, "blender_path": blender, "icon": icon}
 
 
 ## swap_placeholder params for the job, null for no swap, or an error.
@@ -1348,6 +1356,14 @@ func _pipeline_continue_async(job: Dictionary, config: Dictionary, pick_index: i
 			if result.has("error"):
 				save_job(job)
 				return _pipeline_reply(job, notes, report, "The swap failed; fix it and call asset_pipeline asset_id=%s again, or call swap_placeholder by hand." % job.asset_id)
+			if String(swap.target) == "item" and not (config.get("icon", true) is bool and config.get("icon", true) == false):
+				var icon: Dictionary = await _make_icon(job, String(swap.get("item_id", job.asset_id)), config, ctx)
+				report["icon"] = icon
+				if report.has("inspection") and icon.get("icons", []) is Array and not icon.get("icons", []).is_empty():
+					report.inspection.images["icon"] = icon.icons[0].absolute_path
+				elif report.has("inspection"):
+					report.inspection.issues.append("icon: " + str(icon.get("error", icon.get("skipped", "not made"))))
+					report.inspection.verdict = "check"
 			job.stage = "done"
 			log_step(job, "done", {"swap": swap.target})
 	var msg := "Done: %s is in the game." % job.asset_id if job.stage == "done" else next_hint(job)
@@ -1431,6 +1447,23 @@ class CaptureCtx extends RefCounted:
 	func send_deferred(payload: Dictionary) -> void:
 		result = payload
 		done.emit()
+
+
+## item_icon_render for a swapped item. Its report, or {"error": ...}.
+func _make_icon(job: Dictionary, item_id: String, config: Dictionary, ctx) -> Dictionary:
+	var params: Dictionary = (config.icon as Dictionary).duplicate() if config.get("icon") is Dictionary else {}
+	params["item_id"] = item_id
+	if not String(job.get("model", "")).is_empty():
+		params["model"] = job.model
+	var deferred: bool = ctx != null and ctx.has_method("send_deferred")
+	var result: Dictionary = await _call_tool(IconTools.new().item_icon_render, params, deferred)
+	if Util.is_error(result):
+		log_step(job, "icon", {"error": result.error.message})
+		return {"error": result.error.message}
+	var data: Dictionary = result.data
+	var made: Array = data.get("icons", [])
+	log_step(job, "icon", {"icons": made.map(func(i): return i.icon)})
+	return data
 
 
 ## swap_placeholder, with before/after renders of the target.

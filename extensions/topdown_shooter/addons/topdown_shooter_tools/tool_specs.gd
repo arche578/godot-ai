@@ -17,6 +17,7 @@ const FEEDBACK_HANDLER_PATH := "res://addons/topdown_shooter_tools/handlers/feed
 const ASSET_HANDLER_PATH := "res://addons/topdown_shooter_tools/handlers/asset_tools.gd"
 const SWAP_HANDLER_PATH := "res://addons/topdown_shooter_tools/handlers/swap_tools.gd"
 const GEN_HANDLER_PATH := "res://addons/topdown_shooter_tools/handlers/gen_tools.gd"
+const ICON_HANDLER_PATH := "res://addons/topdown_shooter_tools/handlers/icon_tools.gd"
 
 const _NUM := {"type": "number"}
 const _BOOL := {"type": "boolean"}
@@ -623,7 +624,7 @@ static func definitions() -> Array[Dictionary]:
 			"script": GEN_HANDLER_PATH,
 			"deferred": true,
 			"timeout_ms": 120000,
-			"description": "Prompt to in-game model in steps; call again with the same asset_id to continue. 1st call: asset_generate (same params; dry_run first). Later calls: poll; STOP when candidates are ready so the user picks (pick=N); texture the pick; download; asset_cleanup (Blender) -> asset_import; swap_placeholder (weapon and item by default, others via swap={target,...}); before/after renders and a verdict. Each call says what is next. Import and swap are one undo step each. source=<model file> (Tripo Studio export, meshy CLI output; asset_job op=inbox) skips generation and credits and goes to cleanup.",
+			"description": "Prompt to in-game model in steps; call again with the same asset_id to continue. 1st call: asset_generate (same params; dry_run first). Later calls: poll; STOP when candidates are ready so the user picks (pick=N); texture the pick; download; asset_cleanup (Blender) -> asset_import; swap_placeholder (weapon, item by default; others via swap={target,...}); item icon; before/after renders and a verdict. Replies say what is next. Import, swap, icon: one undo step each. source=<model file> (Tripo Studio export, meshy CLI output; asset_job op=inbox) skips generation and credits, starting at cleanup.",
 			"schema": {
 				"type": "object",
 				"additionalProperties": false,
@@ -646,11 +647,42 @@ static func definitions() -> Array[Dictionary]:
 					"cleanup": _desc(_BOOL, "Run asset_cleanup (Blender) before importing. Default true."),
 					"cleanup_options": _desc({"type": "object"}, "Extra asset_cleanup params (size, size_mode, forward, up, yaw_degrees, origin, max_triangles, max_texture, muzzle, timeout_sec)."),
 					"swap": _desc({"type": ["object", "boolean"]}, "false: no swap. Object: swap_placeholder params (target player/enemy/weapon/map/node/item, scene, group, ...); model is filled in. Default: weapon -> weapon scene <asset_id>, item -> item <asset_id>, others none."),
+					"icon": _desc({"type": ["object", "boolean"]}, "Items: make the inventory icon after the swap (item_icon_render). false: no icon. Object: item_icon_render params (cell_px, pitch_degrees, apply_grid, ...). Default true."),
 					"dest_dir": _desc(_STR, "asset_import folder override (cleanup=false only). Default res://assets/<kind>s/<asset_id>."),
 					"preview": _desc(_BOOL, "Model preview PNG on import. Default true."),
 					"inspect": _desc(_BOOL, "Before/after renders of the swapped scene and a verdict. Default true."),
 					"blender_path": _desc(_STR, "Blender executable for asset_cleanup."),
 					"source": _desc(_STR, "A model made elsewhere (.glb/.gltf/.fbx/.obj/.blend; ~/..., res://, absolute): starts the job at cleanup instead of generating. provider labels its origin (tripo, meshy, other)."),
+				},
+			},
+		},
+		{
+			"name": "item_icon_render",
+			"method": &"item_icon_render",
+			"script": ICON_HANDLER_PATH,
+			"deferred": true,
+			"timeout_ms": 120000,
+			"description": "Inventory icons from item models: renders each item's 3D model (item.model or res://assets/items/<id>/<id>.glb) with a fixed orthographic camera, studio light and a transparent background into res://assets/icons/items/<item_id>.png sized to its grid cells (cell_px per cell), the long side across, with a thin outline. Sets item.icon, suggests grid_width/grid_height from the model's shape (apply_grid=true writes them) and patches older inventory_ui.gd / hideout.gd so cells draw icons. Needs a GUI editor; dry_run works anywhere. One undo step. asset_pipeline runs it for items.",
+			"schema": {
+				"type": "object",
+				"additionalProperties": false,
+				"properties": {
+					"item_id": _desc(_STR, "One item id (medkit)."),
+					"item_ids": _desc({"type": "array", "items": {"type": "string"}}, "Several item ids (max 64)."),
+					"all": _desc(_BOOL, "Every item in the database that has an imported model. Default false."),
+					"model": _desc(_STR, "res:// model for a single item_id instead of item.model."),
+					"database_path": _desc(_STR, "Item database. Default res://data/items/item_database.tres."),
+					"icon_dir": _desc(_STR, "Where the PNGs go. Default res://assets/icons/items."),
+					"script_dir": _desc(_STR, "Folder of inventory_ui.gd / hideout.gd to patch. Default res://scripts/topdown."),
+					"cell_px": _desc({"type": "integer", "minimum": 32, "maximum": 512}, "Pixels per grid cell. Default 128."),
+					"pitch_degrees": _desc(_range(0, 90), "Camera look-down angle; 0 side view, 90 top view. Default 30."),
+					"yaw_degrees": _desc(_range(-180, 180), "Camera turn around the item. Default 25."),
+					"auto_orient": _desc(_BOOL, "Turn the longest side across the icon (front to the right). Default true."),
+					"margin": _desc(_range(0, 0.4), "Empty border share on each side. Default 0.08."),
+					"outline": _desc(_BOOL, "Thin dark outline. Default true."),
+					"apply_grid": _desc(_BOOL, "Write the suggested grid_width/grid_height and size the icon to it. Default false."),
+					"patch_ui": _desc(_BOOL, "Teach older inventory_ui.gd / hideout.gd copies to draw icons. Default true."),
+					"dry_run": _desc(_BOOL, "Report models, icon paths, grids and UI patches only. Default false."),
 				},
 			},
 		},

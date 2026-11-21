@@ -24,6 +24,7 @@ const SwapTools := preload("res://addons/topdown_shooter_tools/handlers/swap_too
 const ToolSpecs := preload("res://addons/topdown_shooter_tools/tool_specs.gd")
 const GenTools := preload("res://addons/topdown_shooter_tools/handlers/gen_tools.gd")
 const GenProviders := preload("res://addons/topdown_shooter_tools/handlers/gen_providers.gd")
+const IconTools := preload("res://addons/topdown_shooter_tools/handlers/icon_tools.gd")
 
 const WORK_DIR := "res://zz_mcp_test_topdown"
 const ACTION_PREFIX := "mcp_test_td_"
@@ -159,7 +160,7 @@ func _weapon_params(id: String, extra: Dictionary = {}) -> Dictionary:
 
 func test_specs_validate() -> void:
 	var specs := ToolSpecs.build()
-	assert_eq(specs.size(), 18)
+	assert_eq(specs.size(), 19)
 	var names := []
 	for spec in specs:
 		assert_eq(spec.validate(), [] as Array[String], "spec %s" % spec.name)
@@ -167,9 +168,9 @@ func test_specs_validate() -> void:
 		## The playtest runs while the game plays, so it must not be gated.
 		## playtest_notes is read while the game runs, so it is not gated either.
 		assert_eq(spec.requires_writable, not spec.name in ["raid_playtest", "playtest_notes"], "requires_writable of %s" % spec.name)
-		assert_eq(spec.deferred, spec.name in ["raid_playtest", "asset_cleanup", "asset_import", "asset_generate", "asset_job", "asset_pipeline"], "deferred of %s" % spec.name)
+		assert_eq(spec.deferred, spec.name in ["raid_playtest", "asset_cleanup", "asset_import", "asset_generate", "asset_job", "asset_pipeline", "item_icon_render"], "deferred of %s" % spec.name)
 		names.append(spec.name)
-	assert_eq(names, ["topdown_camera_setup", "player_controller_scaffold", "weapon_create", "combat_feedback_setup", "enemy_ai_scaffold", "item_db_import", "loot_table_edit", "inventory_ui_scaffold", "raid_map_blockout", "raid_playtest", "playtest_notes", "hideout_scaffold", "asset_cleanup", "asset_import", "swap_placeholder", "asset_generate", "asset_job", "asset_pipeline"])
+	assert_eq(names, ["topdown_camera_setup", "player_controller_scaffold", "weapon_create", "combat_feedback_setup", "enemy_ai_scaffold", "item_db_import", "loot_table_edit", "inventory_ui_scaffold", "raid_map_blockout", "raid_playtest", "playtest_notes", "hideout_scaffold", "asset_cleanup", "asset_import", "swap_placeholder", "asset_generate", "asset_job", "asset_pipeline", "item_icon_render"])
 
 
 # --- player ------------------------------------------------------------------
@@ -3224,6 +3225,159 @@ func test_tres_value_edit() -> void:
 	assert_eq(set2.count("model = "), 1)
 	assert_eq(SwapTools._set_tres_value(set2, "model", ""), text)
 	assert_eq(SwapTools._ext_script_path(text), "res://a.gd")
+
+
+# --- item icons (item_icon_render) --------------------------------------------
+
+const ICON_DIR := WORK_DIR + "/icons"
+
+
+func _icon_params(extra: Dictionary = {}) -> Dictionary:
+	var params := {"database_path": ITEM_DIR + "/item_database.tres", "icon_dir": ICON_DIR, "script_dir": WORK_DIR + "/scripts"}
+	params.merge(extra, true)
+	return params
+
+
+## A UI script as an older project copy has it: the template without the
+## icon block.
+func _old_ui_copy(template: String, dest: String) -> String:
+	var tmpl := FileAccess.get_file_as_string("res://addons/topdown_shooter_tools/templates/" + template)
+	var a := tmpl.find(IconTools.UI_MARKER_BEGIN)
+	var b := tmpl.find(IconTools.UI_MARKER_END)
+	assert_true(a > 0 and b > a, "%s has the icon block" % template)
+	var start := tmpl.rfind("\n", a) + 1
+	var end := tmpl.find("\n", b) + 1
+	var old := tmpl.substr(0, start) + tmpl.substr(end)
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(dest.get_base_dir()))
+	_write(dest, old)
+	return old
+
+
+func test_icon_params_rejected() -> void:
+	var icons := IconTools.new()
+	assert_is_error(icons.item_icon_render({}), "INVALID_PARAMS")
+	assert_is_error(icons.item_icon_render({"item_id": "a", "all": true}), "INVALID_PARAMS")
+	assert_is_error(icons.item_icon_render({"item_ids": ["a", "b"], "model": "res://m.glb"}), "INVALID_PARAMS")
+	assert_is_error(icons.item_icon_render({"item_id": "a", "model": "/tmp/m.glb"}), "INVALID_PARAMS")
+	assert_is_error(icons.item_icon_render({"item_id": "a", "cell_px": 8}), "INVALID_PARAMS")
+	assert_is_error(icons.item_icon_render({"item_id": "a", "icon_dir": "/tmp"}), "INVALID_PARAMS")
+	assert_is_error(icons.item_icon_render({"item_id": "a", "colour": 1}), "INVALID_PARAMS")
+	assert_is_error(icons.item_icon_render({"item_ids": "a"}), "INVALID_PARAMS")
+
+
+func test_icon_grid_suggestion_and_framing() -> void:
+	assert_eq(IconTools.suggest_grid(0.1, 0.1), Vector2i(1, 1))
+	assert_eq(IconTools.suggest_grid(0.1, 0.2), Vector2i(2, 1))
+	assert_eq(IconTools.suggest_grid(0.1, 0.3), Vector2i(3, 1))
+	assert_eq(IconTools.suggest_grid(0.1, 0.5), Vector2i(3, 1), "items stop at 3 cells")
+	assert_eq(IconTools.suggest_grid(0.1, 0.5, "weapon"), Vector2i(4, 1))
+	## A side view (pitch 0, yaw 0) of a 2 x 1 x 0.5 box fits its width on a
+	## 2:1 image and centers on the box.
+	var basis := IconTools.camera_basis(0.0, 0.0)
+	var f := IconTools.frame_box(AABB(Vector3(-1, 0, -0.25), Vector3(2, 1, 0.5)), basis, 2.0, 0.0)
+	assert_true(absf(f.height - 1.0) < 0.001, "ortho size %s" % f.height)
+	assert_true(f.center.distance_to(Vector3(0, 0.5, 0)) < 0.001, "center %s" % str(f.center))
+	var wide := IconTools.frame_box(AABB(Vector3(-1, 0, -0.25), Vector3(2, 1, 0.5)), basis, 1.0, 0.0)
+	assert_true(absf(wide.height - 2.0) < 0.001, "square image fits the width: %s" % wide.height)
+	var down := IconTools.camera_basis(90.0, 0.0)
+	assert_true(down.z.distance_to(Vector3.UP) < 0.001, "pitch 90 looks straight down")
+	## The outline darkens transparent pixels next to opaque ones only.
+	var img := Image.create(8, 8, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	img.set_pixel(4, 4, Color(1, 1, 1, 1))
+	var out := IconTools.add_outline(img)
+	assert_true(out.get_pixel(5, 4).a > 0.5, "edge pixel")
+	assert_eq(out.get_pixel(0, 0).a, 0.0, "far pixel stays clear")
+	assert_eq(out.get_pixel(4, 4), Color(1, 1, 1, 1), "opaque pixel kept")
+
+
+func test_icon_tres_edits() -> void:
+	var text := "[gd_resource type=\"Resource\" format=3]\n\n[ext_resource type=\"Script\" path=\"res://a.gd\" id=\"1_s\"]\n\n[resource]\nscript = ExtResource(\"1_s\")\nitem_id = \"x\"\nrarity = \"rare\"\nweight = 0.2\n"
+	var one := IconTools.set_tres_icon(text, "res://i/x.png")
+	assert_true(one.contains("[ext_resource type=\"Script\" path=\"res://a.gd\" id=\"1_s\"]\n[ext_resource type=\"Texture2D\" path=\"res://i/x.png\" id=\"icon_tex\"]"), one)
+	assert_true(one.contains("rarity = \"rare\"\nicon = ExtResource(\"icon_tex\")\nweight"), one)
+	var two := IconTools.set_tres_icon(one, "res://i/y.png")
+	assert_eq(two.count("Texture2D"), 1, two)
+	assert_eq(two.count("icon = "), 1, two)
+	assert_true(two.contains("path=\"res://i/y.png\" id=\"icon_tex\""), two)
+	var grid := IconTools.set_tres_int(IconTools.set_tres_int(one, "grid_width", 3), "grid_height", 1)
+	assert_true(grid.contains("grid_width = 3\ngrid_height = 1\n"), grid)
+	assert_eq(IconTools.set_tres_int(grid, "grid_width", 2).count("grid_width"), 1)
+	## An id already taken gets a new one.
+	var taken := text.replace("id=\"1_s\"", "id=\"icon_tex\"").replace("ExtResource(\"1_s\")", "ExtResource(\"icon_tex\")")
+	assert_true(IconTools.set_tres_icon(taken, "res://i/x.png").contains("id=\"icon_tex_2\""))
+
+
+func test_icon_plan_dry_run_and_apply() -> void:
+	_fresh_loot()
+	var watch := _save_model(_box_model(Vector3(0.1, 0.05, 0.3), Vector3(0, 0.025, 0)), MODEL_DIR + "/icon_watch.tscn")
+	assert_has_key(_swap.swap_placeholder({"target": "item", "item_id": "gold_watch", "model": watch, "database_path": ITEM_DIR + "/item_database.tres", "script_dir": WORK_DIR + "/scripts"}), "data")
+	var icons := IconTools.new()
+	var inv_ui := WORK_DIR + "/scripts/inventory_ui.gd"
+	var hideout := WORK_DIR + "/scripts/hideout.gd"
+	var old_inv := _old_ui_copy("inventory_ui.gd.tmpl", inv_ui)
+	var old_hideout := _old_ui_copy("hideout.gd.tmpl", hideout)
+
+	var dry := icons.item_icon_render(_icon_params({"item_ids": ["gold_watch", "bandage"], "dry_run": true}))
+	assert_has_key(dry, "data", str(dry))
+	assert_eq(dry.data.items.size(), 1, str(dry.data))
+	var row: Dictionary = dry.data.items[0]
+	assert_eq(row.item_id, "gold_watch")
+	assert_eq(row.icon, ICON_DIR + "/gold_watch.png")
+	assert_eq(row.suggested_grid, [3, 1], "0.3 m long, 0.1 m wide: %s" % str(row))
+	assert_eq(row.icon_px, [128, 128], "current 1x1 grid")
+	assert_eq(dry.data.skipped.size(), 1)
+	assert_eq(dry.data.skipped[0].item_id, "bandage")
+	assert_eq(dry.data.ui.size(), 2, str(dry.data.ui))
+	assert_eq(icons.item_icon_render(_icon_params({"all": true, "dry_run": true})).data.items.size(), 1, "all: only items with models")
+	assert_eq(icons.item_icon_render(_icon_params({"item_id": "gold_watch", "dry_run": true, "apply_grid": true, "cell_px": 64})).data.items[0].icon_px, [192, 64])
+	assert_false(FileAccess.file_exists(ICON_DIR + "/gold_watch.png"), "dry run writes nothing")
+	assert_eq(FileAccess.get_file_as_string(inv_ui), old_inv)
+	assert_is_error(icons.item_icon_render(_icon_params({"item_id": "nope"})), "NODE_NOT_FOUND")
+
+	## Apply with a stand-in image (rendering needs a GUI editor).
+	var p: Dictionary = IconTools.read_params(_icon_params({"item_id": "gold_watch", "apply_grid": true}))
+	var plan: Dictionary = icons.make_plan(p)
+	var img := Image.create(384, 128, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0.8, 0.6, 0.2, 1))
+	var result := icons.apply_icons(p, plan, {"gold_watch": img})
+	assert_has_key(result, "data", str(result))
+	assert_eq(result.data.icons.size(), 1)
+	assert_eq(result.data.icons[0].grid, [3, 1])
+	assert_true(result.data.icons[0].grid_changed)
+	assert_true(FileAccess.file_exists(ICON_DIR + "/gold_watch.png"), "PNG written")
+	var png := Image.load_from_file(ProjectSettings.globalize_path(ICON_DIR + "/gold_watch.png"))
+	assert_eq(png.get_size(), Vector2i(384, 128))
+	var item_text := FileAccess.get_file_as_string(ITEM_DIR + "/gold_watch.tres")
+	assert_true(item_text.contains("path=\"%s/gold_watch.png\"" % ICON_DIR), item_text)
+	assert_true(item_text.contains("grid_width = 3") and item_text.contains("grid_height = 1"), item_text)
+	for path in [inv_ui, hideout]:
+		var src := FileAccess.get_file_as_string(path)
+		assert_true(src.contains(IconTools.UI_MARKER_BEGIN), "%s draws icons" % path)
+		var probe := GDScript.new()
+		probe.source_code = src
+		assert_eq(probe.reload(), OK, "%s compiles" % path)
+	## A second run does not patch the UI again.
+	assert_eq(IconTools.plan_ui_patches(WORK_DIR + "/scripts"), [])
+	## Hand-edited copies are reported, not patched.
+	assert_true(String(IconTools.patch_ui_source("func x():\n\tpass\n", FileAccess.get_file_as_string("res://addons/topdown_shooter_tools/templates/inventory_ui.gd.tmpl"), IconTools.UI_PATCHES[0].anchor)).begins_with("!"))
+
+	assert_true(_global_ur().undo(), "undo runs")
+	assert_false(FileAccess.file_exists(ICON_DIR + "/gold_watch.png"), "undo removes the PNG")
+	assert_eq(FileAccess.get_file_as_string(inv_ui), old_inv, "undo restores inventory_ui.gd")
+	assert_eq(FileAccess.get_file_as_string(hideout), old_hideout, "undo restores hideout.gd")
+	assert_false(FileAccess.get_file_as_string(ITEM_DIR + "/gold_watch.tres").contains("Texture2D"), "undo restores the item")
+	## Headless editors cannot render.
+	if DisplayServer.get_name() == "headless":
+		assert_is_error(icons.item_icon_render(_icon_params({"item_id": "gold_watch"})), "EDITOR_NOT_READY")
+
+
+func test_icon_ui_templates_draw_icons() -> void:
+	## The inventory grid draws an entry's icon (turned with the stack).
+	for name in ["inventory_ui", "hideout"]:
+		var src := FileAccess.get_file_as_string("res://addons/topdown_shooter_tools/templates/%s.gd.tmpl" % name)
+		assert_eq(src.count(IconTools.UI_MARKER_BEGIN), 1, name)
+		assert_true(src.contains("draw_texture_rect(icon"), name)
 
 
 func _write(path: String, text: String) -> void:
