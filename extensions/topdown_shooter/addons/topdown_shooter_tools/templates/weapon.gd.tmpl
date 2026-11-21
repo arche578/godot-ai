@@ -87,6 +87,8 @@ func try_fire(aim_point: Vector3) -> bool:
 		var dir := base_dir.rotated(Vector3.UP, randf_range(-half_spread, half_spread))
 		if not blocked.is_empty():
 			apply_hit(blocked.collider, blocked.position, dir)
+			if show_tracers:
+				_spawn_tracer(origin, blocked.position)
 		elif data.fire_mode == "projectile" and data.projectile_scene != null:
 			_spawn_projectile(origin, dir)
 		else:
@@ -108,9 +110,42 @@ func _fire_ray(origin: Vector3, dir: Vector3) -> void:
 	var space := get_world_3d().direct_space_state
 	var query := PhysicsRayQueryParameters3D.create(origin, origin + dir * data.max_range, data.collision_mask, _shooter_rids())
 	var result := space.intersect_ray(query)
+	if show_tracers:
+		var end: Vector3 = result.position if not result.is_empty() else origin + dir * data.max_range
+		_spawn_tracer(origin, end)
 	if result.is_empty():
 		return
 	apply_hit(result.collider, result.position, dir)
+
+
+## Hitscan rays are instant, so draw a short-lived streak to show the shot.
+@export var show_tracers := true
+@export var tracer_color := Color(1.0, 0.85, 0.4)
+@export var tracer_width := 0.08
+@export var tracer_lifetime := 0.1
+
+
+func _spawn_tracer(from: Vector3, to: Vector3) -> void:
+	var length := from.distance_to(to)
+	if length < 0.05:
+		return
+	var mesh := BoxMesh.new()
+	mesh.size = Vector3(tracer_width, tracer_width, length)
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.albedo_color = tracer_color
+	mesh.material = mat
+	var tracer := MeshInstance3D.new()
+	tracer.mesh = mesh
+	tracer.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	var host := get_tree().current_scene if get_tree().current_scene != null else get_tree().root
+	host.add_child(tracer)
+	tracer.global_position = (from + to) * 0.5
+	tracer.look_at(to, Vector3.UP if absf((to - from).normalized().y) < 0.99 else Vector3.RIGHT)
+	var tween := tracer.create_tween()
+	tween.tween_property(mat, "albedo_color:a", 0.0, tracer_lifetime)
+	tween.tween_callback(tracer.queue_free)
 
 
 ## Delivers this weapon's damage to `collider` (or the first ancestor that
