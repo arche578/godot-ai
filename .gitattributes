@@ -3,3 +3,9 @@
 script/*       text eol=lf
 script/githooks/* text eol=lf
 *.sh           text eol=lf
+
+# Fork-only: the top-down shooter tools patch generated GDScript by matching
+# "\n"-delimited snippets of their .tmpl templates, and their tests embed
+# multi-line fixtures. A CRLF checkout (Windows autocrlf) breaks both, so keep
+# the extension LF everywhere.
+extensions/topdown_shooter/** text=auto eol=lf

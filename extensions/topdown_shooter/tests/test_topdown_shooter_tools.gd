@@ -2942,7 +2942,10 @@ func test_asset_params_rejected() -> void:
 	assert_true(AssetTools.is_asset_id("gold_watch_2"))
 	assert_false(AssetTools.is_asset_id("_x"))
 	assert_eq(AssetTools.default_dest_dir("weapon", "smg"), "res://assets/weapons/smg")
-	assert_eq(AssetTools.resolve_source("~/Downloads/a.glb"), OS.get_environment("HOME").path_join("Downloads/a.glb"))
+	var home := OS.get_environment("HOME")
+	if home.is_empty():
+		home = OS.get_environment("USERPROFILE")
+	assert_eq(AssetTools.resolve_source("~/Downloads/a.glb"), home.path_join("Downloads/a.glb").replace("\\", "/"), "~ expands; Windows separators become /")
 
 
 func test_asset_import_copies_imports_and_reports() -> void:
