@@ -3372,6 +3372,13 @@ func test_icon_plan_dry_run_and_apply() -> void:
 		assert_is_error(icons.item_icon_render(_icon_params({"item_id": "gold_watch"})), "EDITOR_NOT_READY")
 
 
+func test_gen_inspection_flags_cleanup_warnings() -> void:
+	var job := {"asset_id": ASSET_PREFIX + "shred", "cleanup": {"warnings": ["decimating 800000 -> 2000 triangles broke the model into 900 loose pieces"]}, "steps": []}
+	var out := GenTools.inspection(job, {}, {})
+	assert_eq(out.verdict, "check")
+	assert_true(out.issues.any(func(i): return String(i).begins_with("cleanup: decimating")), str(out.issues))
+	assert_eq(GenTools.inspection({"asset_id": ASSET_PREFIX + "fine", "cleanup": {"warnings": []}, "steps": []}, {}, {}).verdict, "ok")
+
 func test_icon_ui_templates_draw_icons() -> void:
 	## The inventory grid draws an entry's icon (turned with the stack).
 	for name in ["inventory_ui", "hideout"]:
