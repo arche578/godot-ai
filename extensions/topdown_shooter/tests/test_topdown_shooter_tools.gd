@@ -2488,6 +2488,45 @@ func test_notes_list_filters_and_hints() -> void:
 	_clear_notes()
 
 
+func test_notes_categories_default_and_project_setting() -> void:
+	var script := _overlay()
+	var key := NotesTools.CATEGORIES_SETTING
+	var had := ProjectSettings.has_setting(key)
+	var previous: Variant = ProjectSettings.get_setting(key) if had else null
+	ProjectSettings.set_setting(key, null)
+	var ids: Array = NotesTools.category_ids()
+	assert_eq(ids.size(), 12)
+	for id in ["bug", "balance", "level", "graphics", "art_style", "ui", "character", "vfx", "sound", "experience", "idea", "other"]:
+		assert_true(ids.has(id), "default category %s" % id)
+	assert_eq(script.DEFAULT_CATEGORIES, NotesTools.DEFAULT_CATEGORIES, "game and editor defaults match")
+	var labels: Array = []
+	for c in script.categories():
+		labels.append(c.label)
+	assert_true(labels.has("스타일(아트 컨셉)"))
+	assert_true(labels.has("게임 경험"))
+	assert_eq(NotesTools.category_color("bug"), Color(0.95, 0.25, 0.2))
+	assert_eq(NotesTools.category_color("no_such"), NotesTools.FALLBACK_COLOR, "old or removed ids still get a pin")
+	ProjectSettings.set_setting(key, [
+		{"id": "camera", "label": "카메라", "color": "#ff0000"},
+		{"id": "camera", "label": "dup"},
+		{"label": "no id"},
+		"not a dict",
+		{"id": "pace", "color": Color.BLUE},
+	])
+	var custom: Array = script.categories()
+	assert_eq(custom.size(), 2, "bad and repeated entries skipped")
+	assert_eq(custom[0].label, "카메라")
+	assert_eq(custom[0].color, Color(1, 0, 0))
+	assert_eq(custom[1].label, "pace", "label falls back to the id")
+	assert_eq(NotesTools.category_color("pace"), Color.BLUE)
+	assert_eq(NotesTools.category_color("bug"), NotesTools.FALLBACK_COLOR)
+	_clear_notes()
+	assert_eq(_notes.playtest_notes({}).data.categories, ["camera", "pace"], "list reports the ids in use")
+	ProjectSettings.set_setting(key, [{"label": "only junk"}])
+	assert_eq(script.categories().size(), 12, "no valid entry: defaults")
+	ProjectSettings.set_setting(key, previous)
+
+
 func test_notes_rejects_bad_calls() -> void:
 	assert_is_error(_notes.playtest_notes({"op": "dance"}), "INVALID_PARAMS")
 	assert_is_error(_notes.playtest_notes({"op": "list", "id": "x"}), "INVALID_PARAMS")

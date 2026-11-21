@@ -23,13 +23,25 @@ const NOTES_DIR := "res://playtest_notes/"
 const MARKERS_NAME := "PlaytestNoteMarkers"
 const OPS := ["list", "get", "resolve", "reopen", "delete", "markers", "clear_markers", "install", "uninstall"]
 const STATUSES := ["open", "resolved", "all"]
-const CATEGORY_COLORS := {
-	"bug": Color(0.95, 0.25, 0.2),
-	"balance": Color(0.95, 0.7, 0.15),
-	"level": Color(0.3, 0.7, 1.0),
-	"idea": Color(0.45, 0.85, 0.4),
-	"other": Color(0.8, 0.8, 0.8),
-}
+## Same categories as playtest_notes_overlay.gd.tmpl (kept in sync by a test), in order: [id, label, color].
+## Override them in Project Settings with playtest_notes/categories, an Array
+## of {"id": "bug", "label": "버그", "color": "#f24033"} (color optional).
+const CATEGORIES_SETTING := "playtest_notes/categories"
+const DEFAULT_CATEGORIES := [
+	["bug", "버그", Color(0.95, 0.25, 0.2)],
+	["balance", "밸런스", Color(0.95, 0.7, 0.15)],
+	["level", "레벨/맵", Color(0.3, 0.7, 1.0)],
+	["graphics", "그래픽", Color(0.55, 0.5, 1.0)],
+	["art_style", "스타일(아트 컨셉)", Color(0.95, 0.45, 0.75)],
+	["ui", "UI", Color(0.2, 0.85, 0.8)],
+	["character", "캐릭터", Color(0.95, 0.5, 0.25)],
+	["vfx", "특수효과", Color(0.8, 0.95, 0.3)],
+	["sound", "사운드", Color(0.7, 0.4, 0.25)],
+	["experience", "게임 경험", Color(0.3, 0.55, 0.35)],
+	["idea", "아이디어", Color(0.45, 0.85, 0.4)],
+	["other", "기타", Color(0.8, 0.8, 0.8)],
+]
+const FALLBACK_COLOR := Color(0.8, 0.8, 0.8)
 ## Folder the notes live in (tests point it elsewhere).
 var notes_dir := NOTES_DIR
 
@@ -197,6 +209,7 @@ func _op_list(params: Dictionary) -> Dictionary:
 		"resolved_total": all.size() - open_count,
 		"notes_dir": ProjectSettings.globalize_path(notes_dir),
 		"installed": ProjectSettings.has_setting(autoload_key()),
+		"categories": category_ids(),
 	}
 	if not loaded.broken.is_empty():
 		out["broken_files"] = loaded.broken
@@ -207,6 +220,53 @@ func _op_list(params: Dictionary) -> Dictionary:
 	else:
 		out["hint"] = "op='get' id=... returns the full note; open screenshot_path to see the screen (the red ring is the marked spot)."
 	return {"data": out}
+
+
+## The categories in use: [{id, label, color}], from the project setting when
+## it holds at least one valid entry, otherwise DEFAULT_CATEGORIES. Entries
+## without a usable id, and repeated ids, are skipped.
+static func categories() -> Array:
+	var out: Array = []
+	var custom: Variant = ProjectSettings.get_setting(CATEGORIES_SETTING, null)
+	if custom is Array:
+		var seen := {}
+		for entry in custom:
+			if not entry is Dictionary:
+				continue
+			var id := str(entry.get("id", "")).strip_edges()
+			if id.is_empty() or seen.has(id):
+				continue
+			seen[id] = true
+			var label := str(entry.get("label", "")).strip_edges()
+			out.append({"id": id, "label": label if not label.is_empty() else id, "color": parse_color(entry.get("color", null))})
+	if out.is_empty():
+		for c in DEFAULT_CATEGORIES:
+			out.append({"id": c[0], "label": c[1], "color": c[2]})
+	return out
+
+
+static func parse_color(value: Variant) -> Color:
+	if value is Color:
+		return value
+	if value is String and Color.html_is_valid(value):
+		return Color.html(value)
+	return FALLBACK_COLOR
+
+
+## Pin color for a category id; unknown ids (older notes, removed
+## categories) get FALLBACK_COLOR.
+static func category_ids() -> Array:
+	var ids: Array = []
+	for c in categories():
+		ids.append(c.id)
+	return ids
+
+
+static func category_color(id: String) -> Color:
+	for c in categories():
+		if c.id == id:
+			return c.color
+	return FALLBACK_COLOR
 
 
 func _op_get(params: Dictionary) -> Dictionary:
@@ -448,7 +508,7 @@ func show_markers(root: Node, status: String, scene: String) -> Array:
 		index += 1
 		var pos := Vector3(float(at[0]), float(at[1]), float(at[2]))
 		var resolved := str(note.get("status", "open")) == "resolved"
-		var color: Color = CATEGORY_COLORS.get(str(note.get("category", "other")), Color.WHITE)
+		var color: Color = category_color(str(note.get("category", "other")))
 		var label := "%s%s" % ["✓ " if resolved else "", str(note.get("text", "")).replace("\n", " ").left(40)]
 		var pin := make_pin(pos, color, label, 0.45 if resolved else 1.0)
 		pin.name = "Note_" + str(note.id).replace("-", "_")
