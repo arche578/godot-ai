@@ -163,17 +163,17 @@ func _weapon_params(id: String, extra: Dictionary = {}) -> Dictionary:
 
 func test_specs_validate() -> void:
 	var specs := ToolSpecs.build()
-	assert_eq(specs.size(), 21)
+	assert_eq(specs.size(), 23)
 	var names := []
 	for spec in specs:
 		assert_eq(spec.validate(), [] as Array[String], "spec %s" % spec.name)
 		assert_true(spec.promoted)
 		## The playtest runs while the game plays, so it must not be gated.
 		## playtest_notes is read while the game runs, so it is not gated either.
-		assert_eq(spec.requires_writable, not spec.name in ["raid_playtest", "playtest_notes"], "requires_writable of %s" % spec.name)
-		assert_eq(spec.deferred, spec.name in ["raid_playtest", "asset_cleanup", "asset_import", "asset_generate", "asset_job", "asset_pipeline", "polyhaven_fetch", "item_icon_render"], "deferred of %s" % spec.name)
+		assert_eq(spec.requires_writable, not spec.name in ["raid_playtest", "playtest_notes", "asset_audit"], "requires_writable of %s" % spec.name)
+		assert_eq(spec.deferred, spec.name in ["raid_playtest", "asset_cleanup", "asset_import", "asset_generate", "asset_job", "asset_pipeline", "polyhaven_fetch", "item_icon_render", "character_anim_setup"], "deferred of %s" % spec.name)
 		names.append(spec.name)
-	assert_eq(names, ["topdown_camera_setup", "player_controller_scaffold", "weapon_create", "combat_feedback_setup", "enemy_ai_scaffold", "item_db_import", "loot_table_edit", "inventory_ui_scaffold", "raid_map_blockout", "raid_playtest", "playtest_notes", "hideout_scaffold", "asset_cleanup", "asset_import", "swap_placeholder", "asset_generate", "asset_job", "asset_pipeline", "polyhaven_fetch", "environment_setup", "item_icon_render"])
+	assert_eq(names, ["topdown_camera_setup", "player_controller_scaffold", "weapon_create", "combat_feedback_setup", "enemy_ai_scaffold", "item_db_import", "loot_table_edit", "inventory_ui_scaffold", "raid_map_blockout", "raid_playtest", "playtest_notes", "hideout_scaffold", "asset_cleanup", "asset_import", "swap_placeholder", "asset_generate", "asset_job", "asset_pipeline", "polyhaven_fetch", "environment_setup", "item_icon_render", "character_anim_setup", "asset_audit"])
 
 
 # --- player ------------------------------------------------------------------
@@ -4150,3 +4150,373 @@ func test_env_preset_template_is_neutral_and_parses() -> void:
 
 static func Util_is_error(v: Variant) -> bool:
 	return v is Dictionary and v.get("status", "") == "error"
+
+
+# --- characters (character_anim_setup) and asset_audit --------------------------
+
+const CharacterTools := preload("res://addons/topdown_shooter_tools/handlers/character_tools.gd")
+const AuditTools := preload("res://addons/topdown_shooter_tools/handlers/audit_tools.gd")
+const CHAR_LIB := ASSET_KNOWN_DIR + "/" + ASSET_PREFIX + "humanoid.res"
+## Mixamo-style rig: [bone, parent, rest offset].
+const MIXAMO_BONES := [
+	["mixamorig_Hips", "", Vector3(0, 1, 0)],
+	["mixamorig_Spine", "mixamorig_Hips", Vector3(0, 0.1, 0)],
+	["mixamorig_Spine1", "mixamorig_Spine", Vector3(0, 0.12, 0)],
+	["mixamorig_Spine2", "mixamorig_Spine1", Vector3(0, 0.12, 0)],
+	["mixamorig_Neck", "mixamorig_Spine2", Vector3(0, 0.15, 0)],
+	["mixamorig_Head", "mixamorig_Neck", Vector3(0, 0.1, 0)],
+	["mixamorig_HeadTop_End", "mixamorig_Head", Vector3(0, 0.2, 0)],
+	["mixamorig_LeftShoulder", "mixamorig_Spine2", Vector3(0.05, 0.1, 0)],
+	["mixamorig_LeftArm", "mixamorig_LeftShoulder", Vector3(0.12, 0, 0)],
+	["mixamorig_LeftForeArm", "mixamorig_LeftArm", Vector3(0.25, 0, 0)],
+	["mixamorig_LeftHand", "mixamorig_LeftForeArm", Vector3(0.25, 0, 0)],
+	["mixamorig_LeftHandIndex1", "mixamorig_LeftHand", Vector3(0.08, 0, 0)],
+	["mixamorig_RightShoulder", "mixamorig_Spine2", Vector3(-0.05, 0.1, 0)],
+	["mixamorig_RightArm", "mixamorig_RightShoulder", Vector3(-0.12, 0, 0)],
+	["mixamorig_RightForeArm", "mixamorig_RightArm", Vector3(-0.25, 0, 0)],
+	["mixamorig_RightHand", "mixamorig_RightForeArm", Vector3(-0.25, 0, 0)],
+	["mixamorig_LeftUpLeg", "mixamorig_Hips", Vector3(0.1, -0.05, 0)],
+	["mixamorig_LeftLeg", "mixamorig_LeftUpLeg", Vector3(0, -0.45, 0)],
+	["mixamorig_LeftFoot", "mixamorig_LeftLeg", Vector3(0, -0.42, 0)],
+	["mixamorig_LeftToeBase", "mixamorig_LeftFoot", Vector3(0, -0.05, 0.1)],
+	["mixamorig_RightUpLeg", "mixamorig_Hips", Vector3(-0.1, -0.05, 0)],
+	["mixamorig_RightLeg", "mixamorig_RightUpLeg", Vector3(0, -0.45, 0)],
+	["mixamorig_RightFoot", "mixamorig_RightLeg", Vector3(0, -0.42, 0)],
+	["mixamorig_RightToeBase", "mixamorig_RightFoot", Vector3(0, -0.05, 0.1)],
+]
+
+
+func test_character_bone_map_guess() -> void:
+	var names: Array = MIXAMO_BONES.map(func(b): return b[0])
+	var parents: Array = []
+	for b in MIXAMO_BONES:
+		parents.append(names.find(b[1]))
+	var guess := CharacterTools.auto_bone_map(names, parents)
+	assert_eq(guess.missing, [], str(guess))
+	assert_eq(guess.map.Hips, "mixamorig_Hips")
+	assert_eq(guess.map.Spine, "mixamorig_Spine")
+	assert_eq(guess.map.Chest, "mixamorig_Spine1")
+	assert_eq(guess.map.UpperChest, "mixamorig_Spine2")
+	assert_eq(guess.map.LeftUpperArm, "mixamorig_LeftArm")
+	assert_eq(guess.map.RightLowerArm, "mixamorig_RightForeArm")
+	assert_eq(guess.map.LeftUpperLeg, "mixamorig_LeftUpLeg")
+	assert_eq(guess.map.LeftLowerLeg, "mixamorig_LeftLeg")
+	assert_eq(guess.map.RightToes, "mixamorig_RightToeBase")
+	assert_eq(guess.map.LeftIndexProximal, "mixamorig_LeftHandIndex1")
+	assert_false(guess.map.values().has("mixamorig_HeadTop_End"), "end bones stay unmapped")
+	## Unreal-style names, with the Mixamo-in-FBX colon form too.
+	var ue := ["pelvis", "spine_01", "spine_02", "spine_03", "neck_01", "head", "clavicle_l", "upperarm_l", "lowerarm_l", "hand_l",
+		"clavicle_r", "upperarm_r", "lowerarm_r", "hand_r", "thigh_l", "calf_l", "foot_l", "ball_l", "thigh_r", "calf_r", "foot_r", "ball_r", "thumb_01_l"]
+	var ue_parents := [-1, 0, 1, 2, 3, 4, 3, 6, 7, 8, 3, 10, 11, 12, 0, 14, 15, 16, 0, 18, 19, 20, 9]
+	var g2 := CharacterTools.auto_bone_map(ue, ue_parents)
+	assert_eq(g2.missing, [], str(g2))
+	assert_eq(g2.map.UpperChest, "spine_03")
+	assert_eq(g2.map.LeftLowerLeg, "calf_l")
+	assert_eq(g2.map.LeftThumbMetacarpal, "thumb_01_l")
+	assert_eq(CharacterTools.auto_bone_map(["mixamorig:Hips", "Bone", "Bone.001"], [-1, 0, 1]).missing.size(), CharacterTools.REQUIRED_BONES.size() - 1, "only Hips found")
+	## Roles from download names.
+	for case in [["Rifle Idle", "idle"], ["Walking", "walk"], ["Rifle Run", "run"], ["Sprinting Forward Roll", "dodge"], ["Firing Rifle", "fire"],
+			["Reloading", "reload"], ["Hit Reaction", "hit"], ["Dying", "death"], ["Walking Backwards", "walk_back"], ["Left Strafe Walking", "strafe_left"],
+			["Rifle Aiming Idle", "aim"], ["Zombie Punching", "attack"], ["RifleWalk", "walk"], ["mixamo.com", ""]]:
+		assert_eq(CharacterTools.guess_role(case[0]), case[1], case[0])
+	assert_eq(CharacterTools._file_id("Rifle Walk (1).fbx"), "rifle_walk_1")
+
+
+func test_character_params_rejected() -> void:
+	var chars := CharacterTools.new()
+	assert_is_error(chars.character_anim_setup({}), "INVALID_PARAMS")
+	assert_is_error(chars.character_anim_setup({"target": "boss"}), "INVALID_PARAMS")
+	assert_is_error(chars.character_anim_setup({"target": "enemy"}), "INVALID_PARAMS")
+	assert_is_error(chars.character_anim_setup({"target": "player", "colour": 1}), "INVALID_PARAMS")
+	assert_is_error(chars.character_anim_setup({"target": "player", "weapon_follow": "teeth"}), "INVALID_PARAMS")
+	assert_is_error(chars.character_anim_setup({"target": "player", "walk_speed": 5, "run_speed": 4}), "INVALID_PARAMS")
+	assert_is_error(chars.character_anim_setup({"target": "player", "clips": {"dance": "x"}}), "INVALID_PARAMS")
+	assert_is_error(chars.character_anim_setup({"target": "player", "scene": WORK_DIR + "/nope.tscn"}), "INVALID_PARAMS")
+
+
+func test_character_tree_build() -> void:
+	var bt := CharacterTools.build_tree(["idle", "walk", "run", "fire", "reload", "death"], 1.6, 4.0, false, true)
+	for n in ["locomotion", "loco_speed", "fire", "fire_clip", "fire_speed", "reload", "life", "death_clip"]:
+		assert_true(bt.has_node(n), "node %s" % n)
+	for n in ["aim", "hit", "dodge", "attack"]:
+		assert_false(bt.has_node(n), "no %s without its clip" % n)
+	var loco := bt.get_node("locomotion") as AnimationNodeBlendSpace1D
+	assert_true(loco != null and loco.get_blend_point_count() == 3, "idle/walk/run on speed")
+	assert_eq(loco.get_blend_point_position(2), 4.0)
+	var fire := bt.get_node("fire") as AnimationNodeOneShot
+	assert_true(fire.filter_enabled and fire.is_path_filtered(NodePath("%GeneralSkeleton:RightHand")), "fire moves the arms")
+	assert_false(fire.is_path_filtered(NodePath("%GeneralSkeleton:LeftUpperLeg")), "not the legs")
+	var dir := CharacterTools.build_tree(["idle", "walk", "walk_back", "strafe_left", "strafe_right"], 1.6, 4.0, true, true)
+	assert_true(dir.get_node("locomotion") is AnimationNodeBlendSpace2D, "strafes -> 2D")
+	assert_eq((dir.get_node("locomotion") as AnimationNodeBlendSpace2D).get_blend_point_count(), 5)
+	var idle_only := CharacterTools.build_tree(["idle"], 1.6, 4.0, false, true)
+	assert_true(idle_only.get_node("locomotion") is AnimationNodeAnimation)
+
+
+## A Mixamo-style skinned rig (capsule bound to Hips) with one clip, exported
+## to a .glb. walk: Hips moves forward; death: falls.
+func _export_rig(abs_path: String, clip: String = "") -> String:
+	var root := Node3D.new()
+	root.name = "Rig"
+	var arm := Node3D.new()
+	arm.name = "Armature"
+	root.add_child(arm)
+	arm.owner = root
+	var sk := Skeleton3D.new()
+	sk.name = "Skeleton3D"
+	arm.add_child(sk)
+	sk.owner = root
+	for b in MIXAMO_BONES:
+		var i := sk.add_bone(b[0])
+		if b[1] != "":
+			sk.set_bone_parent(i, sk.find_bone(b[1]))
+		sk.set_bone_rest(i, Transform3D(Basis(), b[2]))
+	sk.reset_bone_poses()
+	var cap := CapsuleMesh.new()
+	cap.height = 1.8
+	cap.radius = 0.3
+	var arrays := cap.get_mesh_arrays()
+	var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+	var bones := PackedInt32Array()
+	var weights := PackedFloat32Array()
+	for v in verts.size():
+		verts[v].y += 0.9
+		bones.append_array([0, 0, 0, 0])
+		weights.append_array([1.0, 0.0, 0.0, 0.0])
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_BONES] = bones
+	arrays[Mesh.ARRAY_WEIGHTS] = weights
+	var am := ArrayMesh.new()
+	am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	var mi := MeshInstance3D.new()
+	mi.name = "Body"
+	mi.mesh = am
+	sk.add_child(mi)
+	mi.owner = root
+	mi.skeleton = NodePath("..")
+	mi.skin = sk.create_skin_from_rest_transforms()
+	if not clip.is_empty():
+		var ap := AnimationPlayer.new()
+		ap.name = "AnimationPlayer"
+		root.add_child(ap)
+		ap.owner = root
+		var anim := Animation.new()
+		anim.length = 1.0
+		var t := anim.add_track(Animation.TYPE_POSITION_3D)
+		anim.track_set_path(t, "Armature/Skeleton3D:mixamorig_Hips")
+		anim.position_track_insert_key(t, 0.0, Vector3(0, 1, 0))
+		anim.position_track_insert_key(t, 1.0, Vector3(0, 0.3 if clip == "death" else 0.95, 0 if clip == "death" else 1.5))
+		var r := anim.add_track(Animation.TYPE_ROTATION_3D)
+		anim.track_set_path(r, "Armature/Skeleton3D:mixamorig_LeftArm")
+		anim.rotation_track_insert_key(r, 0.0, Quaternion())
+		anim.rotation_track_insert_key(r, 1.0, Quaternion(Vector3.FORWARD, 0.8))
+		var lib := AnimationLibrary.new()
+		lib.add_animation("mixamo.com", anim)
+		ap.add_animation_library("", lib)
+	## The glTF writer needs the skeleton in the tree to export joints.
+	var host := (Engine.get_main_loop() as SceneTree).root
+	host.add_child(root)
+	DirAccess.make_dir_recursive_absolute(abs_path.get_base_dir())
+	var doc := GLTFDocument.new()
+	var state := GLTFState.new()
+	assert_eq(doc.append_from_scene(root, state), OK, "gltf append")
+	assert_eq(doc.write_to_filesystem(state, abs_path), OK, "gltf write")
+	host.remove_child(root)
+	root.free()
+	return abs_path
+
+
+func _char_downloads() -> String:
+	return ProjectSettings.globalize_path("user://zz_mcp_test_downloads")
+
+
+func _remove_char_test_files() -> void:
+	_remove_asset_test_files()
+	_remove_tree(_char_downloads())
+
+
+func test_character_anim_setup_retargets_builds_tree_and_animator() -> void:
+	_remove_char_test_files()
+	var made := _tools.player_scaffold(_player_params({"add_to_scene": false}))
+	assert_has_key(made, "data", str(made))
+	var scene: String = made.data.scene_path
+	## The model in a folder the editor knows (imports at once in tests).
+	var model := ASSET_KNOWN_DIR + "/" + ASSET_PREFIX + "hero.glb"
+	_export_rig(ProjectSettings.globalize_path(model))
+	var downloads := _char_downloads()
+	for spec in [["Rifle Idle", "idle"], ["Walking", "walk"], ["Dying", "death"], ["Firing Rifle", "fire"], ["Thriller Part 3", "walk"]]:
+		_export_rig(downloads.path_join(ASSET_PREFIX + spec[0] + ".glb"), spec[1])
+	var params := {"target": "player", "scene": scene, "model": model, "animations": [downloads], "library": CHAR_LIB,
+		"anim_dir": ASSET_KNOWN_DIR, "script_dir": WORK_DIR + "/scripts", "clips": {"run": ASSET_PREFIX + "Thriller Part 3"}}
+
+	var dry := CharacterTools.new().character_anim_setup(params.merged({"dry_run": true}))
+	assert_has_key(dry, "data", str(dry))
+	assert_eq(dry.data.animations.size(), 5)
+	assert_false(FileAccess.file_exists(CHAR_LIB), "dry run writes nothing")
+
+	var result := CharacterTools.new().character_anim_setup(params)
+	assert_has_key(result, "data", str(result))
+	var data: Dictionary = result.data
+	assert_eq(data.roles, ["idle", "walk", "run", "fire", "death"], str(data))
+	assert_true(data.retargeted.has(model), "model retargeted: %s" % str(data.retargeted))
+	assert_eq(data.copied.size(), 5, "clips copied in: %s" % str(data.copied))
+	## The model: renamed bones under %GeneralSkeleton, bone map in .import.
+	var info := CharacterTools.skeleton_info(model)
+	assert_true(info.retargeted, str(info))
+	assert_true(info.bones.has("LeftUpperArm") and info.bones.has("RightHand"), str(info.bones))
+	var cfg := ConfigFile.new()
+	assert_eq(cfg.load(model + ".import"), OK)
+	assert_true(str(cfg.get_value("params", "_subresources")).contains("retarget/bone_map"), "bone map in the import settings")
+	assert_true(FileAccess.file_exists(CharacterTools.bone_map_path(model)))
+	## The library: skeleton tracks only, in place, loops.
+	var lib := load(CHAR_LIB) as AnimationLibrary
+	assert_true(lib != null and lib.has_animation("walk") and lib.has_animation("death"))
+	var walk := lib.get_animation("walk")
+	assert_eq(walk.loop_mode, Animation.LOOP_LINEAR)
+	assert_eq(lib.get_animation("death").loop_mode, Animation.LOOP_NONE)
+	for t in walk.get_track_count():
+		assert_true(String(walk.track_get_path(t)).begins_with("%GeneralSkeleton:"), str(walk.track_get_path(t)))
+	var hips := walk.find_track(NodePath("%GeneralSkeleton:Hips"), Animation.TYPE_POSITION_3D)
+	assert_true(hips >= 0, "hips track")
+	var first: Vector3 = walk.track_get_key_value(hips, 0)
+	var last: Vector3 = walk.track_get_key_value(hips, walk.track_get_key_count(hips) - 1)
+	assert_true(absf(last.z - first.z) < 0.0001 and absf(last.x - first.x) < 0.0001, "in place: %s -> %s" % [first, last])
+
+	## The scene: model swapped under Aim, tree and animator added.
+	var player := (ResourceLoader.load(scene, "", ResourceLoader.CACHE_MODE_IGNORE) as PackedScene).instantiate()
+	assert_true(player.get_node_or_null("Aim/BodySkin/Model") != null, "model swapped in")
+	assert_false((player.get_node("Body") as Node3D).visible)
+	var tree := player.get_node_or_null("AnimationTree") as AnimationTree
+	assert_true(tree != null, "AnimationTree added")
+	assert_eq(String(tree.root_node), "../Aim/BodySkin/Model")
+	assert_true(tree.get_node(tree.root_node).get_node_or_null("%GeneralSkeleton") is Skeleton3D, "tracks resolve from the tree's root node")
+	assert_true(tree.has_animation_library("humanoid"))
+	assert_true((tree.tree_root as AnimationNodeBlendTree).has_node("fire"))
+	var animator := player.get_node_or_null("CharacterAnimator")
+	assert_true(animator != null, "animator added")
+	assert_eq(animator.get("roles"), PackedStringArray(["idle", "walk", "run", "fire", "death"]))
+	assert_eq(String(animator.get("weapon_mount_path")), "../Aim/WeaponMount")
+	assert_eq(String(animator.get("hand_bone")), "RightHand")
+	player.free()
+
+	## Rerun with no new clips: files unchanged, nodes replaced (not doubled).
+	var again := CharacterTools.new().character_anim_setup({"target": "player", "scene": scene, "model": model, "library": CHAR_LIB, "script_dir": WORK_DIR + "/scripts"})
+	assert_has_key(again, "data", str(again))
+	assert_eq(again.data.swap.status, "kept")
+	assert_eq(again.data.retargeted, [], "already retargeted")
+	var p2 := (ResourceLoader.load(scene, "", ResourceLoader.CACHE_MODE_IGNORE) as PackedScene).instantiate()
+	assert_eq(p2.get_children().filter(func(c): return String(c.name).begins_with("AnimationTree")).size(), 1)
+	p2.free()
+	## Undo the scene edit: the tree is gone again.
+	assert_true(_global_ur().undo(), "undo the scene edit")
+	var p3 := (ResourceLoader.load(scene, "", ResourceLoader.CACHE_MODE_IGNORE) as PackedScene).instantiate()
+	assert_true(p3.get_node_or_null("AnimationTree") != null, "the first run's tree is back (undo restores the file as it was)")
+	p3.free()
+	_remove_char_test_files()
+
+
+func test_character_animator_drives_tree() -> void:
+	_remove_char_test_files()
+	var model := ASSET_KNOWN_DIR + "/" + ASSET_PREFIX + "hero.glb"
+	_export_rig(ProjectSettings.globalize_path(model))
+	var downloads := _char_downloads()
+	for spec in [["Idle", "idle"], ["Walking", "walk"], ["Running", "walk"], ["Dying", "death"], ["Hit Reaction", "walk"]]:
+		_export_rig(downloads.path_join(ASSET_PREFIX + spec[0] + ".glb"), spec[1])
+	var made := _tools.player_scaffold(_player_params({"add_to_scene": false}))
+	var result := CharacterTools.new().character_anim_setup({"target": "player", "scene": made.data.scene_path, "model": model, "animations": [downloads],
+		"library": CHAR_LIB, "anim_dir": ASSET_KNOWN_DIR, "script_dir": WORK_DIR + "/scripts"})
+	assert_has_key(result, "data", str(result))
+	## A @tool copy of the animator runs in the editor on a stand-in body.
+	var src := FileAccess.get_file_as_string(WORK_DIR + "/scripts/character_animator.gd")
+	var script := GDScript.new()
+	script.source_code = "@tool\n" + src
+	assert_eq(script.reload(), OK, "animator compiles")
+	var body := CharacterBody3D.new()
+	body.name = "AnimTestBody"
+	body.add_user_signal("died")
+	body.add_user_signal("health_changed", [{"name": "current", "type": TYPE_FLOAT}, {"name": "maximum", "type": TYPE_FLOAT}])
+	var aim := Node3D.new()
+	aim.name = "Aim"
+	body.add_child(aim)
+	var mount := Node3D.new()
+	mount.name = "WeaponMount"
+	mount.position = Vector3(0, 1.2, -0.5)
+	aim.add_child(mount)
+	var skin := Node3D.new()
+	skin.name = "BodySkin"
+	aim.add_child(skin)
+	var inst := (load(model) as PackedScene).instantiate()
+	inst.name = "Model"
+	skin.add_child(inst)
+	var tree := AnimationTree.new()
+	tree.name = "AnimationTree"
+	tree.add_animation_library("humanoid", load(CHAR_LIB))
+	tree.tree_root = CharacterTools.build_tree(result.data.roles, 1.6, 4.0, false, true)
+	tree.root_node = NodePath("../Aim/BodySkin/Model")
+	body.add_child(tree)
+	var animator := Node.new()
+	animator.name = "CharacterAnimator"
+	animator.set_script(script)
+	animator.set("roles", PackedStringArray(result.data.roles))
+	body.add_child(animator)
+	_root().add_child(body)
+	_added.append(body)
+	assert_true(result.data.roles.has("hit"), str(result.data.roles))
+	body.velocity = Vector3(0, 0, -3)
+	for i in 20:
+		animator._process(0.1)
+	assert_true(absf(float(tree.get("parameters/locomotion/blend_position")) - 3.0) < 0.05, "speed drives the blend: %s" % tree.get("parameters/locomotion/blend_position"))
+	var hand_skel := inst.get_node("%GeneralSkeleton") as Skeleton3D
+	var hand: Transform3D = hand_skel.global_transform * hand_skel.get_bone_global_pose(hand_skel.find_bone("RightHand"))
+	assert_true(mount.global_position.distance_to(hand.origin) < 0.001, "weapon mount in the hand: %s vs %s" % [mount.global_position, hand.origin])
+	body.emit_signal("health_changed", 100.0, 100.0)
+	body.emit_signal("health_changed", 80.0, 100.0)
+	assert_eq(int(tree.get("parameters/hit/request")), AnimationNodeOneShot.ONE_SHOT_REQUEST_FIRE, "damage plays the hit clip")
+	body.emit_signal("died")
+	tree.advance(0.05)
+	assert_eq(String(tree.get("parameters/life/current_state")), "dead", "died -> death clip")
+	body.velocity = Vector3.ZERO
+	_remove_char_test_files()
+
+
+func test_asset_audit_reports_placeholders_items_and_characters() -> void:
+	var made := _tools.player_scaffold(_player_params({"add_to_scene": false}))
+	assert_has_key(made, "data", str(made))
+	var audit := AuditTools.new()
+	assert_is_error(audit.asset_audit({"checks": ["vibes"]}), "INVALID_PARAMS")
+	assert_is_error(audit.asset_audit({"scenes": ["res://nope.tscn"]}), "INVALID_PARAMS")
+	var report := audit.asset_audit({"scenes": [made.data.scene_path], "checks": ["placeholders", "characters"]})
+	assert_has_key(report, "data", str(report))
+	var data: Dictionary = report.data
+	assert_true(int(data.summary.placeholders_by_kind.get("character", 0)) >= 1, str(data.summary))
+	assert_eq(data.characters[0].status, "placeholder")
+	assert_true(String(data.characters[0].fix).contains("character_anim_setup"))
+	assert_false(data.clean)
+	## After a swap the capsule no longer counts; the model needs animation.
+	var model := _save_model(_box_model(Vector3(0.6, 2.0, 0.4), Vector3(0, 1.0, 0)), MODEL_DIR + "/audit_hero.tscn")
+	assert_has_key(_swap.swap_placeholder({"target": "player", "scene": made.data.scene_path, "model": model}), "data")
+	var after: Dictionary = audit.asset_audit({"scenes": [made.data.scene_path], "checks": ["placeholders", "characters"]}).data
+	assert_eq(int(after.summary.placeholders_by_kind.get("character", 0)), 0, str(after.summary))
+	assert_eq(after.characters[0].status, "model_without_animation")
+	## Items: the test item sheet has no icons or models.
+	var items := _items.item_db_import(_item_params())
+	assert_has_key(items, "data", str(items))
+	var it: Dictionary = audit.asset_audit({"checks": ["items"], "database_path": ITEM_DIR + "/item_database.tres"}).data
+	assert_true(int(it.summary.items_without_icon) > 0 and int(it.summary.items_without_icon) == int(it.summary.items), str(it))
+	## Budget: an over-budget box in a kind folder is flagged.
+	var budget_dir := WORK_DIR + "/audit_assets/items/big"
+	var big := _box_model(Vector3(0.3, 0.3, 0.3), Vector3(0, 0.15, 0))
+	var sphere := MeshInstance3D.new()
+	var sm := SphereMesh.new()
+	sm.radial_segments = 128
+	sm.rings = 64
+	sphere.mesh = sm
+	big.add_child(sphere)
+	sphere.owner = big
+	var packed_path := _save_model(big, budget_dir + "/big.tscn")
+	assert_true(FileAccess.file_exists(packed_path))
+	var over: Variant = AuditTools._audit_budget(WORK_DIR + "/audit_assets", ["tscn"])
+	assert_eq(over.over.size(), 1, str(over))
+	assert_eq(over.over[0].kind, "item")
+	assert_eq(AuditTools._kind_of(WORK_DIR + "/audit_assets/items/big/big.glb", WORK_DIR + "/audit_assets"), "item")
+	assert_eq(AuditTools._kind_of(WORK_DIR + "/audit_assets/env/wall.glb", WORK_DIR + "/audit_assets"), "prop")
