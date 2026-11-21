@@ -622,7 +622,30 @@ func _report(root: Node, p: Dictionary, plan: Dictionary) -> Dictionary:
 		out["warnings"] = ["The model covers much less than its collision box at %d of %d placeholders, e.g. %s. Use fit=fill (height to the box), fit=stretch, or a model closer to the box's proportions." % [mismatched.size(), plan.swaps.size(), mismatched[0]]]
 	if p.target == "weapon" and not plan.model_has_muzzle and not p.revert:
 		out["note"] = "The model has no Muzzle node; Muzzle was put at its front-most point. asset_cleanup adds a Muzzle to weapons."
+	if p.target in ["player", "enemy"]:
+		_character_notes(root, p, out)
 	return out
+
+
+## Characters: the animation set up by character_anim_setup keeps working
+## only with a retargeted model (bones under %GeneralSkeleton).
+static func _character_notes(root: Node, p: Dictionary, out: Dictionary) -> void:
+	var animated := root.get_node_or_null(^"AnimationTree") != null and root.get_node(^"AnimationTree").has_meta(&"character_anim_setup")
+	if p.revert:
+		if animated:
+			out["warnings"] = out.get("warnings", []) + ["The AnimationTree from character_anim_setup now has no model to animate; run character_anim_setup again after the next swap (or delete AnimationTree and CharacterAnimator)."]
+		return
+	var retargeted := false
+	var packed := load(p.model) as PackedScene
+	if packed != null:
+		var probe := packed.instantiate()
+		retargeted = probe != null and probe.get_node_or_null(^"%GeneralSkeleton") is Skeleton3D
+		if probe != null:
+			probe.free()
+	if animated and not retargeted:
+		out["warnings"] = out.get("warnings", []) + ["This model is not retargeted (no %GeneralSkeleton), so the existing animations will not move it: run character_anim_setup target=" + p.target + " model=" + p.model + "."]
+	elif not animated:
+		out["next"] = "character_anim_setup target=%s%s model=%s animations=[Mixamo FBX files] animates it (idle/walk/run, death, fire, weapon in hand)" % [p.target, " asset_id=" + p.asset_id if not p.asset_id.is_empty() else "", p.model]
 
 
 ## Reloads a scene resource from disk after it changed underneath.

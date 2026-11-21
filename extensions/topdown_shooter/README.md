@@ -17,14 +17,15 @@
    복사합니다. 결과: `<게임 프로젝트>/addons/topdown_shooter_tools/plugin.cfg`
 2. Godot에서 **프로젝트 > 프로젝트 설정 > 플러그인**을 열고 `Godot AI`와
    `Top-down Shooter Tools`를 둘 다 켭니다.
-3. Godot AI 독의 **Tools** 탭에 도구 21개가 보이면 끝입니다. Claude Code나 Claude
+3. Godot AI 독의 **Tools** 탭에 도구 23개가 보이면 끝입니다. Claude Code나 Claude
    데스크톱에는 `custom_topdown_camera_setup`, `custom_player_controller_scaffold`,
    `custom_weapon_create`, `custom_combat_feedback_setup`, `custom_enemy_ai_scaffold`, `custom_item_db_import`,
    `custom_loot_table_edit`, `custom_inventory_ui_scaffold`, `custom_raid_map_blockout`,
    `custom_raid_playtest`, `custom_playtest_notes`, `custom_hideout_scaffold`,
    `custom_asset_cleanup`, `custom_asset_import`, `custom_swap_placeholder`,
    `custom_asset_generate`, `custom_asset_job`, `custom_asset_pipeline`,
-   `custom_polyhaven_fetch`, `custom_environment_setup`, `custom_item_icon_render`라는 이름으로 나타납니다(승격 도구). 다만 Godot AI 서버가
+   `custom_polyhaven_fetch`, `custom_environment_setup`, `custom_item_icon_render`,
+   `custom_character_anim_setup`, `custom_asset_audit`라는 이름으로 나타납니다(승격 도구). 다만 Godot AI 서버가
    승격 도구를 이름순 8개까지만 등록하므로, 나머지는
    `custom_manage(op="invoke", params={"tool_name": ..., "params": {...}})`로 부릅니다.
 
@@ -53,6 +54,8 @@
 | `polyhaven_fetch` | Poly Haven(CC0, 키 없음)에서 텍스처 세트나 HDRI를 받음. 텍스처는 `res://assets/materials/<이름>/`에 색·노멀(.import에 노멀 맵 표시)·ARM(또는 거칠기·AO·금속)과 머티리얼 `<이름>.tres`(월드 좌표 트라이플래너라 늘린 상자·키트 조각에도 무늬가 고르게, `tile_meters`마다 반복). HDRI는 `res://assets/hdri/<이름>.hdr`. `search=`는 id 목록만. 출처·작가·라이선스를 `res://asset_sources/polyhaven/`에 기록. 실행 취소 한 번 |
 | `environment_setup` | 열린 3D 씬의 `WorldEnvironment`와 해를 추가하거나 고침. 하늘(HDRI 또는 기본 하늘), 주변광, 톤맵, SSAO, 거리·높이 안개, 볼류메트릭 안개, 해 색·세기·각도·그림자. 값은 호출 인자 > `style_preset.json`의 `environment` > 중립 기본값. Environment는 공용 `.tres`(기본 `res://assets/environment/world_environment.tres`)에 저장해 레이드 맵과 은신처가 같은 분위기. 실행 취소 한 번 |
 | `item_icon_render` | 인벤토리 아이콘. 아이템 3D 모델(`item.model`)을 고정 정사영 카메라·조명·투명 배경으로 렌더해 `res://assets/icons/items/<item_id>.png`(칸 수 × `cell_px`, 기본 128px)를 만들고 `item.icon`을 채움. 긴 변을 가로로 눕히고(앞은 오른쪽) 얇은 테두리를 둘러 희귀도 색 칸에서도 잘 보이게 함. 모델 모양으로 칸 수(`grid_width`/`grid_height`)를 제안하고 `apply_grid=true`면 씀. 예전 사본의 `inventory_ui.gd`·`hideout.gd`가 칸에 아이콘을 그리도록 고침. 여러 개 한 번에(`item_ids`, `all=true`). GUI 에디터 필요(`dry_run`은 어디서나). 실행 취소 한 번 |
+| `character_anim_setup` | 캐릭터 애니메이션. 리깅된 모델(Mixamo·Meshy·Tripo의 .fbx/.glb)과 애니메이션 파일(Mixamo FBX)을 프로젝트로 복사하고, 뼈 이름으로 본 맵을 짐작해 Godot 사람형 뼈 규격(SkeletonProfileHumanoid)으로 리타겟해서 가져옴. 파일 이름으로 역할(대기·걷기·달리기·조준·발사·재장전·구르기·피격·사망·근접 공격·뒷걸음·옆걸음)을 정해 공용 라이브러리 `res://assets/animations/humanoid/humanoid.res` 하나에 넣음(제자리 걷기, 반복 설정). `Body`를 모델로 바꾸고(`swap_placeholder`) `AnimationTree`와 `CharacterAnimator`를 붙여 이동 속도·AI 상태·`died`·피격·발사·재장전·구르기를 클립에 연결. 무기 장착점은 손 뼈를 따라감. 다른 캐릭터는 같은 라이브러리를 그대로 씀. 파일·교체·씬 각각 실행 취소 한 번 |
+| `asset_audit` | 읽기 전용 점검. 씬마다 남은 임시 도형(캐릭터 `Body`, 무기 `Model`, 레이드 맵 `Walls`·`Cover`·`Crates`·`Floors`, 기타), 캐릭터 상태(캡슐 / 모델만 / 애니메이션, 빠진 클립), 아이콘·모델 없는 아이템과 사라진 파일, 삼각형·텍스처 예산을 넘은 모델을 한 번에 보고하고 항목마다 고치는 도구를 알려 줌. 다 끝나면 `clean=true` |
 
 Claude에게는 이렇게 말하면 됩니다.
 
@@ -570,3 +573,20 @@ environment_setup hdri=kloofendal_overcast_puresky fog=true
 | 충돌·내비 | 블록아웃 상자의 StaticBody3D·충돌 모양은 그대로고 내비 메시는 충돌로만 구우므로 바뀌지 않음. 충돌이 든 조각은 거부 |
 | 아트 방향 | 재질·하늘·안개·해 값은 게임 프로젝트의 `res://assets/style_preset.json` `environment`에만 둠(`kit_materials`에 polyhaven_fetch 이름). 애드온 기본값은 중립 |
 
+## 캐릭터: 리깅 모델, Mixamo 애니메이션, 손에 든 무기
+
+```
+character_anim_setup target=player model=~/Downloads/player.fbx animations=["~/Downloads/mixamo"]
+character_anim_setup target=enemy asset_id=grunt model=~/Downloads/grunt.fbx      # 라이브러리 재사용
+asset_audit                                                                        # 남은 일 점검
+```
+
+| 규칙 | 내용 |
+|---|---|
+| 모델 | 오리지널 캐릭터만. 참고 이미지(Higgsfield) → 3D(Meshy·Tripo, T자 자세) → 리깅(Mixamo 자동 리거에 올리고 **FBX, With Skin**으로 받기, 또는 Meshy·Tripo 리깅). `res://assets/characters/<id>/<id>.fbx`로 복사됨 |
+| 애니메이션 | Mixamo에서 직접 받기: **FBX Binary, Without Skin, 30fps, In Place 켜기**(걷기·달리기). 추천: Rifle Idle, Rifle Walk, Rifle Run, Firing Rifle, Reloading, Hit Reaction, Dying, Sprinting Forward Roll, (적 근접) Punching, (선택) Walking Backwards, Left/Right Strafe Walking, Rifle Aiming Idle. 파일 이름에 역할이 안 보이면 `clips={"fire": "Shooting"}` |
+| 리타겟 | 모델과 클립 모두 임포트 설정의 Retarget > Bone Map에 짐작한 본 맵(`<파일>_bone_map.tres`)을 넣음. 뼈 이름이 규격 이름으로 바뀌고 골격은 `%GeneralSkeleton`이 되어 어느 출처 클립이든 모든 캐릭터에 맞음. 짐작이 안 되면 필요한 뼈 목록과 함께 거절 |
+| 트리 | `locomotion`(속도 → 대기/걷기/달리기, 뒷걸음·옆걸음이 있으면 2D) → `aim` → `hit`·`fire`·`reload`(상체만) → `attack` → `dodge` → `life`(사망). 있는 클립만 노드가 생김 |
+| 연결 | 플레이어·적 스크립트는 고치지 않음. `CharacterAnimator`가 `velocity`, `get_state_name()`(`ATTACK`·`CHASE`면 조준), `died`, `health_changed`, `dodged`, `attack_started`, 무기의 `fired`·`reload_started`를 읽음. 적은 사망 클립이 끝날 때까지 `death_free_delay`를 늘림 |
+| 손에 든 무기 | 게임 중 `WeaponMount`가 손 뼈 위치로 감(`weapon_follow=hand_position`, 조준 방향은 그대로). `hand`는 손 방향까지. 위치 미세 조정은 `grip_offset`. 발사는 그대로 무기의 `Muzzle`에서 |
+| 속도 | `walk_speed`(기본 1.6)·`run_speed`(기본 4)는 클립이 보여 주는 속도. 더 빨리 움직이면 재생도 빨라짐 |

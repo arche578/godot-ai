@@ -4494,7 +4494,9 @@ func test_asset_audit_reports_placeholders_items_and_characters() -> void:
 	assert_false(data.clean)
 	## After a swap the capsule no longer counts; the model needs animation.
 	var model := _save_model(_box_model(Vector3(0.6, 2.0, 0.4), Vector3(0, 1.0, 0)), MODEL_DIR + "/audit_hero.tscn")
-	assert_has_key(_swap.swap_placeholder({"target": "player", "scene": made.data.scene_path, "model": model}), "data")
+	var swapped := _swap.swap_placeholder({"target": "player", "scene": made.data.scene_path, "model": model})
+	assert_has_key(swapped, "data", str(swapped))
+	assert_true(String(swapped.data.get("next", "")).contains("character_anim_setup"), "swap points to the animation step: %s" % str(swapped.data))
 	var after: Dictionary = audit.asset_audit({"scenes": [made.data.scene_path], "checks": ["placeholders", "characters"]}).data
 	assert_eq(int(after.summary.placeholders_by_kind.get("character", 0)), 0, str(after.summary))
 	assert_eq(after.characters[0].status, "model_without_animation")

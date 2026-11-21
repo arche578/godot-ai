@@ -117,16 +117,61 @@ func character_anim_setup(params: Dictionary, ctx = null) -> Dictionary:
 
 
 func _continue_async(p: Dictionary, plan: Dictionary, pending: Array, ctx) -> void:
-	var assets := AssetTools.new()
-	var deadline := 0
+	var deadline := Time.get_ticks_msec() + int(AssetTools.IMPORT_WAIT_SEC * 1000.0)
 	if "deadline_msec" in ctx and int(ctx.deadline_msec) > 0:
-		deadline = int(ctx.deadline_msec) - AssetTools.REPLY_MARGIN_MSEC - 10000
-	for path in pending:
-		if not await assets.wait_for_import(path, false, deadline):
-			ctx.send_deferred({"data": {"import_pending": pending, "copied": plan.copied,
-				"note": "the editor had not imported %s in time. Focus the Godot window, then call character_anim_setup again with the same parameters (copied files are kept)." % path}})
-			return
+		deadline = mini(deadline, int(ctx.deadline_msec) - AssetTools.REPLY_MARGIN_MSEC - 15000)
+	var state := await _wait_imports(pending, deadline)
+	if not state.failed.is_empty():
+		ctx.send_deferred(Util.error(Util.INTERNAL_ERROR, "the editor could not import %s (see the Output panel). An FBX needs Godot's built-in FBX importer (ufbx); re-download it as FBX Binary, or export it to .glb." % ", ".join(state.failed)))
+		return
+	if not state.waiting.is_empty():
+		ctx.send_deferred({"data": {"import_pending": state.waiting, "copied": plan.copied,
+			"note": "the editor had not imported %s in time. Focus the Godot window, then call character_anim_setup again with the same parameters (copied files are kept)." % ", ".join(state.waiting)}})
+		return
 	ctx.send_deferred(_continue(p, plan))
+
+
+## Waits until each path is imported or its import failed. Coroutine.
+## {failed: [...], waiting: [...]}
+func _wait_imports(paths: Array, deadline: int) -> Dictionary:
+	var efs := EditorInterface.get_resource_filesystem()
+	var tree := Engine.get_main_loop() as SceneTree
+	var scanned := false
+	while true:
+		var failed: Array = []
+		var waiting: Array = []
+		var idle := not efs.is_scanning() and not efs.is_importing()
+		for path in paths:
+			if AssetTools._import_valid(path):
+				continue
+			if idle and scanned and _import_failed(path):
+				failed.append(path)
+			else:
+				waiting.append(path)
+		if waiting.is_empty() or Time.get_ticks_msec() >= deadline:
+			return {"failed": failed, "waiting": waiting}
+		if idle and not scanned:
+			scanned = true
+			efs.scan_sources()
+		elif idle:
+			## Known now but not imported: ask for it once more.
+			var known: PackedStringArray = []
+			for path in waiting:
+				if AssetTools.folder_known(String(path).get_base_dir()) and not FileAccess.file_exists(path + ".import.lock"):
+					efs.update_file(path)
+					known.append(path)
+			if not known.is_empty() and not _import_failed(known[0]):
+				efs.reimport_files(known)
+		await tree.create_timer(0.3).timeout
+	return {"failed": [], "waiting": paths}
+
+
+## The editor tried and gave up (it writes valid=false into the .import).
+static func _import_failed(path: String) -> bool:
+	var cfg := ConfigFile.new()
+	if cfg.load(path + ".import") != OK:
+		return false
+	return cfg.get_value("remap", "valid", true) == false
 
 
 # =============================================================================
@@ -396,12 +441,16 @@ static func _write_base_import(path: String, is_model: bool) -> Variant:
 		"animation/fps": 30,
 		"animation/remove_immutable_tracks": true,
 	}
+	if path.get_extension().to_lower() == "fbx":
+		## Godot's built-in importer (ufbx); 1 would need the FBX2glTF tool.
+		settings["fbx/importer"] = 0
 	if is_model:
 		settings.merge({"meshes/ensure_tangents": true, "meshes/generate_lods": true, "meshes/create_shadow_meshes": true, "meshes/light_baking": 1})
 	else:
 		settings.merge({"meshes/generate_lods": false, "meshes/create_shadow_meshes": false})
 	for key in settings:
-		if not cfg.has_section_key("params", key):
+		var forced: bool = key == "fbx/importer"
+		if not cfg.has_section_key("params", key) or (forced and cfg.get_value("params", key) != settings[key]):
 			cfg.set_value("params", key, settings[key])
 			changed = true
 	if not changed:
@@ -462,6 +511,8 @@ static func skeleton_info(path: String) -> Dictionary:
 			for a in (n as AnimationPlayer).get_animation_list():
 				if String(a) != "RESET" and not String(a).ends_with("/RESET"):
 					info.clips.append(String(a))
+					info["lengths"] = info.get("lengths", {})
+					info.lengths[String(a)] = (n as AnimationPlayer).get_animation(a).length
 		for c in n.get_children():
 			stack.append(c)
 	root.free()
@@ -658,6 +709,15 @@ func _build_library(p: Dictionary, plan: Dictionary) -> Variant:
 	var candidates: Array = []
 	for e in plan.anims:
 		var clips: Array = e.info.clips
+		## Several clips none of which names a role (Mixamo FBX: "mixamo.com"
+		## and an empty "Take 001"): the file is one clip, its longest.
+		if clips.size() > 1 and clips.all(func(c): return guess_role(String(c)).is_empty()):
+			var lengths: Dictionary = e.info.get("lengths", {})
+			var longest: String = clips[0]
+			for c in clips:
+				if float(lengths.get(c, 0.0)) > float(lengths.get(longest, 0.0)):
+					longest = c
+			clips = [longest]
 		for clip in clips:
 			var label: String = e.label if clips.size() == 1 else String(clip).get_file()
 			candidates.append({"file": e.dest, "label": label, "clip": clip, "role": guess_role(label) if clips.size() == 1 else guess_role(String(clip))})
@@ -1029,7 +1089,7 @@ static func build_tree(roles: Array, walk_speed: float, run_speed: float, direct
 			for spec in [["idle", Vector2.ZERO], ["walk", Vector2(0, walk_speed)], ["run", Vector2(0, run_speed)],
 					["walk_back", Vector2(0, -walk_speed)], ["strafe_left", Vector2(-walk_speed, 0)], ["strafe_right", Vector2(walk_speed, 0)]]:
 				if spec[0] in roles:
-					bs.add_blend_point(_clip_node(spec[0]), spec[1])
+					bs.add_blend_point(_clip_node(spec[0]), spec[1], -1, StringName(spec[0]))
 			locomotion = bs
 		else:
 			var bs1 := AnimationNodeBlendSpace1D.new()
@@ -1037,7 +1097,7 @@ static func build_tree(roles: Array, walk_speed: float, run_speed: float, direct
 			bs1.max_space = (run_speed if "run" in roles else walk_speed) * 1.25
 			for spec in [["idle", 0.0], ["walk", walk_speed], ["run", run_speed]]:
 				if spec[0] in roles:
-					bs1.add_blend_point(_clip_node(spec[0]), spec[1])
+					bs1.add_blend_point(_clip_node(spec[0]), spec[1], -1, StringName(spec[0]))
 			locomotion = bs1
 	else:
 		locomotion = _clip_node("idle")

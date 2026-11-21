@@ -140,7 +140,7 @@ static func find_files(dirs: Array, extensions: Array, limit: int) -> Array:
 		stack.append(Util.clean_dir(d))
 	while not stack.is_empty() and out.size() < limit:
 		var dir_path: String = stack.pop_front()
-		if dir_path in SKIP_DIRS or FileAccess.file_exists(dir_path.path_join(".gdignore")):
+		if dir_path in SKIP_DIRS or not DirAccess.dir_exists_absolute(dir_path) or FileAccess.file_exists(dir_path.path_join(".gdignore")):
 			continue
 		var dir := DirAccess.open(dir_path)
 		if dir == null:
@@ -345,7 +345,8 @@ static func _audit_budget(assets_dir: String, extensions: Array = []) -> Diction
 	var over: Array = []
 	var checked := 0
 	for path in models:
-		if not ResourceLoader.exists(path):
+		## Animation sources only carry clips (their mesh, if any, is unused).
+		if not ResourceLoader.exists(path) or String(path).trim_prefix(Util.clean_dir(assets_dir) + "/").begins_with("animations/"):
 			continue
 		var kind := _kind_of(path, assets_dir)
 		var packed := ResourceLoader.load(path, "PackedScene") as PackedScene

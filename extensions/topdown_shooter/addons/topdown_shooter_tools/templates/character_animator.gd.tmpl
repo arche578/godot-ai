@@ -115,6 +115,10 @@ func _on_died() -> void:
 			_set_param(role + "/request", AnimationNodeOneShot.ONE_SHOT_REQUEST_ABORT)
 	if has_role("death"):
 		_set_param("life/transition_request", "dead")
+	else:
+		## No death clip: at least stop walking.
+		_blend = Vector2.ZERO
+		_set_param("locomotion/blend_position", _blend if directional else 0.0)
 
 
 func _on_health_changed(current: float, _maximum: float) -> void:
