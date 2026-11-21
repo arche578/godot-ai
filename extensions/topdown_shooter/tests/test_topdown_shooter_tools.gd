@@ -25,6 +25,8 @@ const ToolSpecs := preload("res://addons/topdown_shooter_tools/tool_specs.gd")
 const GenTools := preload("res://addons/topdown_shooter_tools/handlers/gen_tools.gd")
 const GenProviders := preload("res://addons/topdown_shooter_tools/handlers/gen_providers.gd")
 const IconTools := preload("res://addons/topdown_shooter_tools/handlers/icon_tools.gd")
+const EnvTools := preload("res://addons/topdown_shooter_tools/handlers/env_tools.gd")
+const KitTools := preload("res://addons/topdown_shooter_tools/handlers/kit_tools.gd")
 
 const WORK_DIR := "res://zz_mcp_test_topdown"
 const ACTION_PREFIX := "mcp_test_td_"
@@ -81,6 +83,7 @@ func suite_teardown() -> void:
 	_remove_tree(ProjectSettings.globalize_path(WORK_DIR))
 	_remove_asset_test_files()
 	_remove_gen_test_files()
+	_remove_env_test_files()
 	var changed := false
 	for suffix in Tools.INPUT_ACTIONS.keys() + ["inventory", "interact"]:
 		var action: String = ACTION_PREFIX + suffix
@@ -160,7 +163,7 @@ func _weapon_params(id: String, extra: Dictionary = {}) -> Dictionary:
 
 func test_specs_validate() -> void:
 	var specs := ToolSpecs.build()
-	assert_eq(specs.size(), 19)
+	assert_eq(specs.size(), 21)
 	var names := []
 	for spec in specs:
 		assert_eq(spec.validate(), [] as Array[String], "spec %s" % spec.name)
@@ -168,9 +171,9 @@ func test_specs_validate() -> void:
 		## The playtest runs while the game plays, so it must not be gated.
 		## playtest_notes is read while the game runs, so it is not gated either.
 		assert_eq(spec.requires_writable, not spec.name in ["raid_playtest", "playtest_notes"], "requires_writable of %s" % spec.name)
-		assert_eq(spec.deferred, spec.name in ["raid_playtest", "asset_cleanup", "asset_import", "asset_generate", "asset_job", "asset_pipeline", "item_icon_render"], "deferred of %s" % spec.name)
+		assert_eq(spec.deferred, spec.name in ["raid_playtest", "asset_cleanup", "asset_import", "asset_generate", "asset_job", "asset_pipeline", "polyhaven_fetch", "item_icon_render"], "deferred of %s" % spec.name)
 		names.append(spec.name)
-	assert_eq(names, ["topdown_camera_setup", "player_controller_scaffold", "weapon_create", "combat_feedback_setup", "enemy_ai_scaffold", "item_db_import", "loot_table_edit", "inventory_ui_scaffold", "raid_map_blockout", "raid_playtest", "playtest_notes", "hideout_scaffold", "asset_cleanup", "asset_import", "swap_placeholder", "asset_generate", "asset_job", "asset_pipeline", "item_icon_render"])
+	assert_eq(names, ["topdown_camera_setup", "player_controller_scaffold", "weapon_create", "combat_feedback_setup", "enemy_ai_scaffold", "item_db_import", "loot_table_edit", "inventory_ui_scaffold", "raid_map_blockout", "raid_playtest", "playtest_notes", "hideout_scaffold", "asset_cleanup", "asset_import", "swap_placeholder", "asset_generate", "asset_job", "asset_pipeline", "polyhaven_fetch", "environment_setup", "item_icon_render"])
 
 
 # --- player ------------------------------------------------------------------
@@ -3781,3 +3784,369 @@ func _merged(a: Dictionary, b: Dictionary) -> Dictionary:
 	var out := a.duplicate()
 	out.merge(b, true)
 	return out
+
+
+
+# --- environment (polyhaven_fetch / swap_placeholder target=kit / environment_setup)
+
+const KIT_ID := "zz_mcp_test_kit"
+const ENV_NAME := "zz_mcp_test_asset_concrete"
+
+
+func _remove_env_test_files() -> void:
+	var kit_dir := ProjectSettings.globalize_path(KitTools.KIT_ROOT + "/" + KIT_ID)
+	_remove_tree(kit_dir)
+	## Drop res://assets/props/kit, props and assets when the tests made them.
+	for dir in [KitTools.KIT_ROOT, KitTools.KIT_ROOT.get_base_dir(), KitTools.KIT_ROOT.get_base_dir().get_base_dir()]:
+		var abs := ProjectSettings.globalize_path(dir)
+		if DirAccess.dir_exists_absolute(abs) and DirAccess.get_files_at(abs).is_empty() and DirAccess.get_directories_at(abs).is_empty():
+			DirAccess.remove_absolute(abs)
+	for name in [ENV_NAME, ENV_NAME + "_sky"]:
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(EnvTools.RECORD_DIR + "/" + name + ".json"))
+	var rec := ProjectSettings.globalize_path(EnvTools.RECORD_DIR)
+	if DirAccess.dir_exists_absolute(rec) and DirAccess.get_files_at(rec).is_empty():
+		DirAccess.remove_absolute(rec)
+	var sources := ProjectSettings.globalize_path(AssetTools.SOURCES_ROOT)
+	if DirAccess.dir_exists_absolute(sources) and DirAccess.get_directories_at(sources).is_empty():
+		DirAccess.remove_absolute(sources.path_join(".gdignore"))
+		_remove_tree(sources)
+
+
+## A raid-map-like blockout (Floors / Walls / Cover) and a hideout-like Room.
+func _kit_map() -> Node3D:
+	var map := Node3D.new()
+	map.name = "KitTestMap"
+	map.set_meta(&"raid_map_seed", 1)
+	_root().add_child(map)
+	_added.append(map)
+	map.owner = _root()
+	var specs := [
+		["Floors", "Floor1", Vector3(4, 0.5, 6), Vector3(0, -0.25, 0)],
+		["Walls", "Wall1", Vector3(0.4, 3, 6.4), Vector3(-2.2, 1.5, 0)],
+		["Walls", "Wall2", Vector3(5, 1, 0.4), Vector3(0, 0.5, 3.2)],
+		["Cover", "LowWall1", Vector3(3, 1.1, 0.6), Vector3(0, 0.55, 1)],
+		["Cover", "Pillar2", Vector3(1, 3, 1), Vector3(1, 1.5, -1)],
+		["Cover", "Box3", Vector3(1.4, 1.3, 1.4), Vector3(-1, 0.65, -2)],
+		["Crates", "Crate1", Vector3(1, 0.7, 0.8), Vector3(1.5, 0.35, 2)],
+		["Hideout/Room", "Floor", Vector3(8.8, 0.2, 6.8), Vector3(20, -0.1, 0)],
+		["Hideout/Room", "WallNear", Vector3(8.8, 1, 0.4), Vector3(20, 0.5, 3.6)],
+	]
+	for spec in specs:
+		var group := map.get_node_or_null(NodePath(spec[0])) as Node3D
+		if group == null:
+			var parent: Node = map
+			for part in String(spec[0]).split("/"):
+				var n := parent.get_node_or_null(NodePath(part)) as Node3D
+				if n == null:
+					n = Node3D.new()
+					n.name = part
+					parent.add_child(n)
+					n.owner = _root()
+				parent = n
+			group = parent
+		var body := StaticBody3D.new()
+		body.name = spec[1]
+		body.position = spec[3]
+		group.add_child(body)
+		body.owner = _root()
+		var mi := MeshInstance3D.new()
+		mi.name = "Mesh"
+		var box := BoxMesh.new()
+		box.size = spec[2]
+		mi.mesh = box
+		body.add_child(mi)
+		mi.owner = _root()
+		var cs := CollisionShape3D.new()
+		cs.name = "Shape"
+		var shape := BoxShape3D.new()
+		shape.size = spec[2]
+		cs.shape = shape
+		body.add_child(cs)
+		cs.owner = _root()
+	return map
+
+
+func _kit_params(extra: Dictionary = {}) -> Dictionary:
+	var p := {"target": "kit", "kit": KIT_ID, "map_path": "KitTestMap"}
+	p.merge(extra, true)
+	return p
+
+
+func test_kit_split_and_roles() -> void:
+	assert_eq(KitTools.split(7, [4, 2, 1]), [4, 2, 1])
+	assert_eq(KitTools.split(6, [4, 2, 1]), [4, 2])
+	assert_eq(KitTools.split(3, [1]), [1, 1, 1])
+	assert_eq(KitTools.cells_of(6.4, 1.0), 6)
+	assert_eq(KitTools.cells_of(0.2, 1.0), 1)
+	assert_eq(KitTools.role_for("Walls", "Wall3", Vector3(0.4, 3, 5)), "wall")
+	assert_eq(KitTools.role_for("Walls", "Wall3", Vector3(5, 1, 0.4)), "low_wall")
+	assert_eq(KitTools.role_for("Cover", "LowWall2", Vector3(3, 1.1, 0.6)), "low_wall")
+	assert_eq(KitTools.role_for("Cover", "Thing", Vector3(1, 1, 1)), "box")
+	assert_eq(KitTools.role_for("Room", "WallLeft", Vector3(0.4, 3, 6)), "wall")
+	assert_eq(KitTools.role_for("Room", "Table", Vector3(2, 0.8, 1)), "", "hideout furniture is left alone")
+
+
+func test_kit_dresses_raid_groups_and_room_keeping_collision_with_undo_and_revert() -> void:
+	_remove_env_test_files()
+	var map := _kit_map()
+	var dry := _swap.swap_placeholder(_kit_params({"dry_run": true}))
+	assert_has_key(dry, "data", str(dry))
+	assert_eq(dry.data.swapped, 8, "6 raid boxes + 2 Room boxes; crates and furniture untouched: %s" % str(dry.data.by_role))
+	assert_eq(dry.data.kit.would_generate.size(), KitTools.piece_names().size())
+	assert_false(DirAccess.dir_exists_absolute(ProjectSettings.globalize_path(KitTools.KIT_ROOT + "/" + KIT_ID)), "dry run writes no kit")
+	assert_eq(map.get_node("Walls/Wall1").get_node_or_null("MeshSkin"), null, "dry run changes nothing")
+
+	var result := _swap.swap_placeholder(_kit_params())
+	assert_has_key(result, "data", str(result))
+	assert_eq(result.data.by_role, {"floor": 2, "wall": 1, "low_wall": 3, "pillar": 1, "box": 1}, str(result.data.by_role))
+	assert_true(FileAccess.file_exists(KitTools.KIT_ROOT + "/" + KIT_ID + "/wall_4m.tscn"), "missing pieces generated")
+	## The 6.4 m wall: 6 cells -> a 4 m and a 2 m module, stretched to cover it.
+	var wall := map.get_node("Walls/Wall1")
+	var skin := wall.get_node("MeshSkin") as Node3D
+	assert_eq(skin.get_child_count(), 2, "4 m + 2 m modules")
+	assert_eq(skin.owner, _root(), "skin saved with the scene")
+	var wb: AABB = AssetTools.measure(skin).aabb
+	assert_true(absf(wb.size.x - 0.4) < 0.01 and absf(wb.size.y - 3.0) < 0.01 and absf(wb.size.z - 6.4) < 0.01, "modules cover the wall box: %s" % str(wb))
+	assert_true(absf(wb.position.y + 1.5) < 0.01, "from the floor up (body origin at the box center): %s" % str(wb))
+	assert_false((wall.get_node("Mesh") as Node3D).visible, "placeholder hidden")
+	assert_true(wall.get_node("Shape") is CollisionShape3D and (wall.get_node("Shape") as CollisionShape3D).shape.size == Vector3(0.4, 3, 6.4), "collision kept")
+	assert_eq(skin.find_children("*", "CollisionObject3D", true, false).size(), 0, "kit pieces add no collision (navigation bakes from colliders only)")
+	## The 4x6 floor: 4 m tile + two 2 m tiles, top flush with the box top.
+	var floor_skin := map.get_node("Floors/Floor1/MeshSkin") as Node3D
+	assert_eq(floor_skin.get_child_count(), 3, "4x4 + 2x 2x2 tiles")
+	var fb: AABB = AssetTools.measure(floor_skin).aabb
+	assert_true(absf(fb.end.y - 0.25) < 0.01 and absf(fb.size.x - 4) < 0.01 and absf(fb.size.z - 6) < 0.01, "floor tiles cover the floor: %s" % str(fb))
+	assert_true(map.get_node("Hideout/Room/Floor").get_node_or_null("MeshSkin") != null, "hideout Room floor dressed")
+	assert_eq(map.get_node("Crates/Crate1").get_node_or_null("MeshSkin"), null, "crates are not part of the kit")
+	assert_true(result.data.max_stretch > 0.0 and result.data.max_stretch < 0.1, "corner overlaps absorbed by a small stretch: %s" % str(result.data.max_stretch))
+
+	## Rerun replaces the skins instead of stacking them.
+	assert_has_key(_swap.swap_placeholder(_kit_params({"groups": ["Walls"]})), "data")
+	assert_eq(wall.get_children().filter(func(n): return String(n.name).begins_with("MeshSkin")).size(), 1, "one skin")
+
+	assert_true(_scene_ur().undo(), "undo runs")
+	assert_true(_scene_ur().undo(), "undo the first kit pass")
+	assert_eq(wall.get_node_or_null("MeshSkin"), null, "undo removes the skin")
+	assert_true((wall.get_node("Mesh") as Node3D).visible, "undo shows the wall again")
+	assert_true(_scene_ur().redo(), "redo runs")
+	assert_true(wall.get_node_or_null("MeshSkin") != null, "redo")
+
+	var reverted := _swap.swap_placeholder(_kit_params({"revert": true}))
+	assert_has_key(reverted, "data", str(reverted))
+	assert_eq(wall.get_node_or_null("MeshSkin"), null, "revert removes the skins")
+	assert_true((wall.get_node("Mesh") as Node3D).visible, "revert shows the placeholders")
+	assert_is_error(_swap.swap_placeholder(_kit_params({"revert": true})), "NODE_NOT_FOUND")
+
+
+func test_kit_prefers_model_pieces_and_rejects_bad_ones() -> void:
+	_remove_env_test_files()
+	_kit_map()
+	var dir := KitTools.KIT_ROOT + "/" + KIT_ID
+	## A hand-made box piece (could be an imported .glb) is used as is.
+	_save_model(_box_model(Vector3(2, 2, 2), Vector3(0, 1, 0)), dir + "/box.tscn")
+	var result := _swap.swap_placeholder(_kit_params({"groups": ["Cover"]}))
+	assert_has_key(result, "data", str(result))
+	assert_true("box" in result.data.kit.existing, str(result.data.kit))
+	var box_skin := _root().get_node("KitTestMap/Cover/Box3/MeshSkin") as Node3D
+	var bb: AABB = AssetTools.measure(box_skin).aabb
+	assert_true(bb.size.is_equal_approx(Vector3(1.4, 1.3, 1.4)), "model piece stretched to the box: %s" % str(bb.size))
+	## rebuild_kit regenerates only generated pieces.
+	var rebuilt := _swap.swap_placeholder(_kit_params({"groups": ["Cover"], "rebuild_kit": true}))
+	assert_has_key(rebuilt, "data", str(rebuilt))
+	assert_true("box" in rebuilt.data.kit.existing and "pillar" in rebuilt.data.kit.generated, str(rebuilt.data.kit))
+	## A piece with collision would change the navigation: refused.
+	var solid := _box_model(Vector3(1, 1, 1), Vector3(0, 0.5, 0))
+	var body := StaticBody3D.new()
+	body.name = "Col"
+	solid.add_child(body)
+	body.owner = solid
+	_save_model(solid, dir + "/box.tscn")
+	assert_is_error(_swap.swap_placeholder(_kit_params({"groups": ["Cover"]})), "INVALID_PARAMS")
+	## Param checks.
+	assert_is_error(_swap.swap_placeholder(_kit_params({"groups": ["Crates"]})), "INVALID_PARAMS")
+	assert_is_error(_swap.swap_placeholder(_kit_params({"materials": {"wall": "no_such_material"}})), "INVALID_PARAMS")
+	assert_is_error(_swap.swap_placeholder(_kit_params({"materials": {"glass": "res://x.tres"}})), "INVALID_PARAMS")
+	assert_is_error(_swap.swap_placeholder({"target": "map", "group": "Walls", "kit": "x", "model": "res://nope.glb"}), "INVALID_PARAMS")
+	assert_is_error(_swap.swap_placeholder(_kit_params({"map_path": "NoSuchMap"})), "NODE_NOT_FOUND")
+
+
+## Answers like api.polyhaven.com at once.
+class FakePolyHaven extends RefCounted:
+	var requests: Array = []
+	var downloads: Array = []
+
+	func request(req: Dictionary, _timeout: float = 30.0) -> Dictionary:
+		requests.append(req)
+		var url: String = req.url
+		if url.ends_with("/info/concrete_test"):
+			return {"code": 200, "json": {"name": "Concrete Test", "type": 1, "authors": {"Someone": "All"}}, "text": ""}
+		if url.ends_with("/info/sky_test"):
+			return {"code": 200, "json": {"name": "Sky Test", "type": 0, "authors": {"Someone": "All"}}, "text": ""}
+		if url.ends_with("/info/chair_test"):
+			return {"code": 200, "json": {"name": "Chair", "type": 2}, "text": ""}
+		if url.contains("/info/"):
+			return {"code": 404, "json": {"error": "not found"}, "text": ""}
+		if url.ends_with("/files/concrete_test"):
+			var out := {}
+			for key in ["Diffuse", "nor_gl", "nor_dx", "arm", "Rough", "Displacement"]:
+				out[key] = {"1k": {"jpg": {"url": "https://dl.example/%s_1k.jpg" % key, "size": 1000}, "png": {"url": "https://dl.example/%s_1k.png" % key, "size": 3000}},
+					"2k": {"jpg": {"url": "https://dl.example/%s_2k.jpg" % key, "size": 4000}}}
+			out["blend"] = {"1k": {"blend": {"url": "https://dl.example/x.blend", "size": 1}}}
+			return {"code": 200, "json": out, "text": ""}
+		if url.ends_with("/files/sky_test"):
+			return {"code": 200, "json": {"hdri": {"2k": {"hdr": {"url": "https://dl.example/sky_2k.hdr", "size": 5000}}}, "tonemapped": {}}, "text": ""}
+		if url.contains("/assets?type=textures"):
+			return {"code": 200, "json": {"concrete_wall_008": {"name": "Concrete Wall 008", "tags": ["wall"], "categories": ["concrete"], "download_count": 5},
+				"mossy_rock": {"name": "Mossy Rock", "tags": ["moss"], "categories": ["rock"], "download_count": 9}}, "text": ""}
+		if url.contains("/assets?type=hdris"):
+			return {"code": 200, "json": {"overcast_soil": {"name": "Overcast Soil", "tags": ["overcast"], "categories": ["outdoor"]}}, "text": ""}
+		return {"code": 500, "json": null, "text": "unexpected " + url}
+
+	func download(url: String, abs_path: String, _timeout: float = 100.0) -> Dictionary:
+		downloads.append(url)
+		DirAccess.make_dir_recursive_absolute(abs_path.get_base_dir())
+		var f := FileAccess.open(abs_path, FileAccess.WRITE)
+		var img := Image.create(4, 4, false, Image.FORMAT_RGB8)
+		f.store_buffer(img.save_png_to_buffer())
+		f.close()
+		return {"ok": true, "bytes": 10}
+
+
+func _env_tools() -> Array:
+	var env := EnvTools.new()
+	var fake := FakePolyHaven.new()
+	env.transport = fake
+	env.trigger_import = false
+	return [env, fake]
+
+
+func _ph_params(extra: Dictionary = {}) -> Dictionary:
+	var p := {"asset": "concrete_test", "name": ENV_NAME, "material_dir": WORK_DIR + "/materials", "hdri_dir": WORK_DIR + "/hdri"}
+	p.merge(extra, true)
+	return p
+
+
+func test_polyhaven_fetch_texture_material_record_and_undo() -> void:
+	var pair := _env_tools()
+	var env: EnvTools = pair[0]
+	var fake: FakePolyHaven = pair[1]
+	var dry := env.polyhaven_fetch(_ph_params({"dry_run": true}))
+	assert_has_key(dry, "data", str(dry))
+	var maps: Array = dry.data.files.map(func(f): return f.map)
+	assert_eq(maps, ["albedo", "normal", "arm"], "GL normal over DX, ARM over separate roughness, no displacement: %s" % str(maps))
+	assert_eq(dry.data.material_type, "ORMMaterial3D")
+	assert_true(String(dry.data.files[0].path).ends_with("_albedo.jpg"), "jpg preferred")
+	assert_eq(fake.downloads.size(), 0, "dry run downloads nothing")
+	assert_true(fake.requests[0].headers[0].begins_with("User-Agent: "), "identifies itself to Poly Haven")
+
+	var result := env.polyhaven_fetch(_ph_params({"tile_meters": 4.0, "tint": [0.8, 0.9, 0.8]}))
+	assert_has_key(result, "data", str(result))
+	assert_eq(fake.downloads.size(), 3)
+	var mat_path: String = result.data.material
+	assert_eq(mat_path, WORK_DIR + "/materials/%s/%s.tres" % [ENV_NAME, ENV_NAME])
+	var text := FileAccess.get_file_as_string(mat_path)
+	assert_contains(text, "[gd_resource type=\"ORMMaterial3D\"")
+	assert_contains(text, "orm_texture = ExtResource(")
+	assert_contains(text, "normal_enabled = true")
+	assert_contains(text, "uv1_world_triplanar = true")
+	assert_contains(text, "uv1_scale = Vector3(0.25, 0.25, 0.25)")
+	assert_contains(text, "albedo_color = Color(0.8")
+	var normal_cfg := ConfigFile.new()
+	assert_eq(normal_cfg.load(WORK_DIR + "/materials/%s/%s_normal.jpg.import" % [ENV_NAME, ENV_NAME]), OK, "normal .import written")
+	assert_eq(normal_cfg.get_value("params", "compress/normal_map"), 1, "flagged as a normal map")
+	var albedo_cfg := ConfigFile.new()
+	albedo_cfg.load(WORK_DIR + "/materials/%s/%s_albedo.jpg.import" % [ENV_NAME, ENV_NAME])
+	assert_eq(albedo_cfg.get_value("params", "compress/normal_map"), 2, "albedo is not a normal map")
+	var record: Variant = _read_json(EnvTools.RECORD_DIR + "/%s.json" % ENV_NAME)
+	assert_true(record is Dictionary and record.license == "CC0" and record.id == "concrete_test", str(record))
+	assert_is_error(env.polyhaven_fetch(_ph_params()), "ALREADY_EXISTS")
+
+	assert_true(_global_undo().undo(), "undo runs")
+	assert_false(FileAccess.file_exists(mat_path), "undo removes the material")
+	assert_false(FileAccess.file_exists(WORK_DIR + "/materials/%s/%s_albedo.jpg" % [ENV_NAME, ENV_NAME]), "undo removes the textures")
+	assert_true(_global_undo().redo(), "redo runs")
+	assert_true(FileAccess.file_exists(mat_path), "redo")
+
+
+func test_polyhaven_fetch_hdri_search_and_errors() -> void:
+	var pair := _env_tools()
+	var env: EnvTools = pair[0]
+	var hdri := env.polyhaven_fetch(_ph_params({"asset": "sky_test", "name": ENV_NAME + "_sky"}))
+	assert_has_key(hdri, "data", str(hdri))
+	assert_eq(hdri.data.type, "hdri")
+	assert_eq(hdri.data.resolution, "2k", "nearest available resolution")
+	assert_eq(hdri.data.hdri, WORK_DIR + "/hdri/%s_sky.hdr" % ENV_NAME)
+	assert_true(FileAccess.file_exists(hdri.data.hdri), "hdr downloaded")
+	assert_true(String(hdri.data.next).begins_with("environment_setup"), hdri.data.next)
+
+	var found := env.polyhaven_fetch({"search": "moss rock"})
+	assert_has_key(found, "data", str(found))
+	assert_eq(found.data.results[0].id, "mossy_rock", str(found.data.results))
+	assert_is_error(env.polyhaven_fetch(_ph_params({"asset": "missing_thing"})), "INVALID_PARAMS")
+	assert_is_error(env.polyhaven_fetch(_ph_params({"asset": "chair_test"})), "INVALID_PARAMS")
+	assert_is_error(env.polyhaven_fetch(_ph_params({"type": "hdri"})), "INVALID_PARAMS")
+	assert_is_error(env.polyhaven_fetch({"name": "x"}), "INVALID_PARAMS")
+	assert_is_error(env.polyhaven_fetch(_ph_params({"asset": "Bad Id"})), "INVALID_PARAMS")
+	assert_is_error(env.polyhaven_fetch(_ph_params({"resolution": "3k"})), "INVALID_PARAMS")
+	assert_is_error(env.polyhaven_fetch(_ph_params({"material_dir": "res://addons/x"})), "INVALID_PARAMS")
+
+
+func test_environment_setup_world_environment_sun_and_undo() -> void:
+	var env := EnvTools.new()
+	var path := WORK_DIR + "/env/world_environment.tres"
+	var root := _root()
+	var worlds_before := root.find_children("*", "WorldEnvironment", true, false).size()
+	var dry := env.environment_setup({"environment_path": path, "dry_run": true, "fog": true})
+	assert_has_key(dry, "data", str(dry))
+	assert_eq(dry.data.values.fog, true)
+	assert_false(FileAccess.file_exists(path), "dry run writes nothing")
+
+	var result := env.environment_setup({"environment_path": path, "fog": true, "fog_density": 0.05, "fog_color": "#8899aa",
+		"volumetric_fog": true, "sun_energy": 0.6, "sun_color": [1, 0.9, 0.8], "tonemap": "aces"})
+	assert_has_key(result, "data", str(result))
+	assert_true(FileAccess.file_exists(path), "shared environment saved")
+	var world := Util_find_world(root)
+	assert_true(world != null and world.environment != null, "WorldEnvironment present")
+	var e: Environment = world.environment
+	assert_true(e.fog_enabled and absf(e.fog_density - 0.05) < 0.0001, "fog on")
+	assert_true(e.fog_light_color.is_equal_approx(Color.html("#8899aa")), "fog color")
+	assert_true(e.volumetric_fog_enabled, "volumetric fog")
+	assert_eq(e.tonemap_mode, Environment.TONE_MAPPER_ACES)
+	assert_true(e.sky != null and e.sky.sky_material is ProceduralSkyMaterial, "procedural sky without an HDRI")
+	assert_eq(e.resource_path, path, "the scene uses the shared file")
+	var sun := McpScenePath.resolve(result.data.sun, root) as DirectionalLight3D
+	assert_true(sun != null and absf(sun.light_energy - 0.6) < 0.0001, "sun set: %s" % result.data.sun)
+
+	assert_true(_scene_ur().undo(), "undo runs")
+	assert_eq(root.find_children("*", "WorldEnvironment", true, false).size(), worlds_before, "undo puts the scene back")
+	assert_true(_scene_ur().redo(), "redo")
+	assert_true(_scene_ur().undo(), "undo again")
+
+	assert_is_error(env.environment_setup({"tonemap": "sepia"}), "INVALID_PARAMS")
+	assert_is_error(env.environment_setup({"hdri": "no_such_sky"}), "INVALID_PARAMS")
+	assert_is_error(env.environment_setup({"fog_color": [2, "x", 0]}), "INVALID_PARAMS")
+	assert_is_error(env.environment_setup({"environment_path": "res://addons/x.tres"}), "INVALID_PARAMS")
+	assert_is_error(env.environment_setup({"colour": 1}), "INVALID_PARAMS")
+
+
+func Util_find_world(root: Node) -> WorldEnvironment:
+	for n in root.find_children("*", "WorldEnvironment", true, false):
+		if n.owner == root:
+			return n
+	return null
+
+
+func test_env_preset_template_is_neutral_and_parses() -> void:
+	var preset := _template_preset()
+	assert_true(preset.has("environment"), "template has an environment section")
+	var text := FileAccess.get_file_as_string(GenTools.PRESET_TEMPLATE).to_lower()
+	for word in ["moss", "ruin", "vine"]:
+		assert_false(text.contains(word), "the addon default holds no game-specific art concept (%s)" % word)
+	var p: Variant = EnvTools.read_env_params({}, EnvTools.ENV_DEFAULTS)
+	assert_false(Util_is_error(p), str(p))
+	assert_eq(p.fog, false)
+	assert_eq(p.tonemap, "filmic")
+
+
+static func Util_is_error(v: Variant) -> bool:
+	return v is Dictionary and v.get("status", "") == "error"

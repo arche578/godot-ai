@@ -22,6 +22,9 @@ extends RefCounted
 ##   item            item .tres: sets item.model, and teaches the project's
 ##                   item_data.gd / loot_pickup.gd about models if they are
 ##                   older copies; dropped items then show the model.
+##   kit             open scene (or scene=): every Floors / Walls / Cover box
+##                   of a raid map and the hideout's Room, dressed with a
+##                   modular kit on a 1 m grid (kit_tools.gd).
 ##
 ## A scene that is open and current is edited live (one undo step); a scene
 ## that is not open is edited on disk (one undo step in the global history).
@@ -30,13 +33,14 @@ const Util := preload("res://addons/topdown_shooter_tools/handlers/scaffold_util
 const AssetTools := preload("res://addons/topdown_shooter_tools/handlers/asset_tools.gd")
 const ItemTools := preload("res://addons/topdown_shooter_tools/handlers/item_tools.gd")
 const InventoryTools := preload("res://addons/topdown_shooter_tools/handlers/inventory_tools.gd")
+const KitTools := preload("res://addons/topdown_shooter_tools/handlers/kit_tools.gd")
 
-const TARGETS := ["player", "enemy", "weapon", "map", "node", "item"]
+const TARGETS := ["player", "enemy", "weapon", "map", "node", "item", "kit"]
 const FITS := ["auto", "height", "fit", "fill", "stretch", "tile", "none"]
 ## A fitted model smaller than this share of its box on any axis gets a
 ## warning: what you see no longer matches what blocks bullets.
 const MISMATCH_RATIO := 0.6
-const TARGET_KIND := {"player": "character", "enemy": "character", "weapon": "weapon", "map": "prop", "node": "prop", "item": "item"}
+const TARGET_KIND := {"player": "character", "enemy": "character", "weapon": "weapon", "map": "prop", "node": "prop", "item": "item", "kit": "prop"}
 const DEFAULT_PLAYER_SCENE := "res://scenes/player/player.tscn"
 const DEFAULT_ENEMY_DIR := "res://scenes/enemies"
 const DEFAULT_WEAPON_DIR := "res://scenes/weapons"
@@ -58,7 +62,7 @@ func swap_placeholder(params: Dictionary, _ctx = null) -> Dictionary:
 		return p
 	if p.target == "item":
 		return _swap_item(p)
-	if p.target in ["map", "node"]:
+	if p.target in ["map", "node"] or (p.target == "kit" and p.scene.is_empty()):
 		var root := Util.edited_root()
 		if root == null:
 			return Util.no_scene_error()
@@ -98,7 +102,8 @@ func swap_placeholder(params: Dictionary, _ctx = null) -> Dictionary:
 
 static func read_params(params: Dictionary) -> Variant:
 	var allowed := ["target", "model", "asset_id", "scene", "node_path", "map_path", "group", "name_prefix", "fit",
-		"yaw_degrees", "size", "revert", "dry_run", "item_id", "database_path", "script_dir", "move_muzzle"]
+		"yaw_degrees", "size", "revert", "dry_run", "item_id", "database_path", "script_dir", "move_muzzle",
+		"kit", "groups", "materials", "grid", "rebuild_kit"]
 	for key in params:
 		if not key in allowed:
 			return Util.error(Util.INVALID_PARAMS, "unknown parameter '%s' (allowed: %s)" % [key, ", ".join(allowed)])
@@ -130,14 +135,21 @@ static func read_params(params: Dictionary) -> Variant:
 	if not p.fit in FITS:
 		return Util.error(Util.INVALID_PARAMS, "'fit' must be one of %s" % ", ".join(FITS))
 
+	if target == "kit":
+		var kit_p: Variant = KitTools.read_params(params, p)
+		if Util.is_error(kit_p):
+			return kit_p
+	elif params.has("kit") or params.has("groups") or params.has("materials") or params.has("grid") or params.has("rebuild_kit"):
+		return Util.error(Util.INVALID_PARAMS, "kit, groups, materials, grid and rebuild_kit are for target=kit")
+
 	## The model: model=res://..., else the rule folder of asset_id.
 	var kind: String = TARGET_KIND[target]
-	if p.model.is_empty() and not p.revert:
+	if p.model.is_empty() and not p.revert and target != "kit":
 		var id: String = p.asset_id if not p.asset_id.is_empty() else p.item_id
 		if id.is_empty():
 			return Util.error(Util.INVALID_PARAMS, "pass model=res://assets/... (from asset_import) or asset_id")
 		p.model = AssetTools.default_model_path(kind, id)
-	if not p.revert:
+	if not p.revert and target != "kit":
 		if not p.model.begins_with("res://"):
 			return Util.error(Util.INVALID_PARAMS, "'model' must be a res:// path (import it with asset_import first)")
 		if not ResourceLoader.exists(p.model):
@@ -176,6 +188,8 @@ static func read_params(params: Dictionary) -> Variant:
 ## {host, hide:[Node3D], skin_name, transforms:[Transform3D], muzzle, muzzle_to,
 ## old_skin, fit, label}.
 func _plan(root: Node, p: Dictionary) -> Variant:
+	if p.target == "kit":
+		return KitTools.plan(root, p, _placeholder_mesh, _box_in)
 	var placeholders: Variant = _find_placeholders(root, p)
 	if Util.is_error(placeholders):
 		return placeholders
@@ -412,7 +426,19 @@ func _build_skin(swap: Dictionary, p: Dictionary) -> Node3D:
 	var hidden: Array = []
 	for n in swap.hide:
 		hidden.append(String(swap.host.get_path_to(n)))
-	skin.set_meta(SKIN_META, {"model": p.model, "hidden": hidden, "fit": swap.fit})
+	skin.set_meta(SKIN_META, {"model": p.model if p.target != "kit" else p.kit_dir, "hidden": hidden, "fit": swap.fit})
+	if swap.has("pieces"):
+		var cache := {}
+		var k := 0
+		for piece in swap.pieces:
+			k += 1
+			if not cache.has(piece[0]):
+				cache[piece[0]] = load(piece[0])
+			var part := (cache[piece[0]] as PackedScene).instantiate(PackedScene.GEN_EDIT_STATE_INSTANCE) as Node3D
+			part.name = "%s%d" % [String(piece[0]).get_file().get_basename().to_pascal_case(), k]
+			part.transform = piece[1]
+			skin.add_child(part)
+		return skin
 	var packed := load(p.model) as PackedScene
 	var i := 0
 	for t in swap.transforms:
@@ -439,6 +465,12 @@ func _apply_live(root: Node, p: Dictionary, plan: Dictionary) -> Dictionary:
 	for swap in plan.swaps:
 		var host: Node = swap.host
 		var old: Node = swap.old_skin
+		var skin: Node3D = null if p.revert else _build_skin(swap, p)
+		## Undo runs its steps in order: the new skin leaves before the old
+		## one comes back, so the old one gets its own name again (not
+		## "<Name>Skin2", which a redo would then not replace).
+		if skin != null:
+			ur.add_undo_method(host, "remove_child", skin)
 		if old != null:
 			ur.add_do_method(host, "remove_child", old)
 			ur.add_undo_method(host, "add_child", old, true)
@@ -453,13 +485,11 @@ func _apply_live(root: Node, p: Dictionary, plan: Dictionary) -> Dictionary:
 					ur.add_do_property(n, "visible", true)
 					ur.add_undo_property(n, "visible", false)
 			continue
-		var skin := _build_skin(swap, p)
 		ur.add_do_method(host, "add_child", skin, true)
 		ur.add_do_method(skin, "set_owner", root)
 		for child in skin.get_children():
 			ur.add_do_method(child, "set_owner", root)
 		ur.add_do_reference(skin)
-		ur.add_undo_method(host, "remove_child", skin)
 		for n in swap.hide:
 			if n.visible:
 				ur.add_do_property(n, "visible", false)
@@ -556,6 +586,8 @@ static func _hidden_paths(skin: Node) -> Array:
 
 
 func _report(root: Node, p: Dictionary, plan: Dictionary) -> Dictionary:
+	if p.target == "kit":
+		return KitTools.report(root, p, plan)
 	var swaps: Array = []
 	var copies := 0
 	var mismatched: Array[String] = []
