@@ -424,7 +424,9 @@ func plan_generation(p: Dictionary) -> Variant:
 	if existing != null and String(existing.get("stage", "")) in ACTIVE_STAGES and not p.overwrite:
 		return Util.error(Util.ALREADY_EXISTS, "asset '%s' already has a job (stage %s). Continue it with asset_job/asset_pipeline asset_id=%s, or pass overwrite=true to start a new one (the old job file is kept as job_<time>.json)." % [
 			p.asset_id, existing.stage, p.asset_id])
-	var loaded: Variant = load_preset(not p.dry_run)
+	## The preset file is written only by a call that will go ahead.
+	var key := api_key(p.provider)
+	var loaded: Variant = load_preset(not p.dry_run and not key.key.is_empty())
 	if Util.is_error(loaded):
 		return loaded
 	var prompt: String = p.prompt
@@ -445,7 +447,6 @@ func plan_generation(p: Dictionary) -> Variant:
 		return composed
 	if p.target_polycount > 0:
 		composed.target_polycount = p.target_polycount
-	var key := api_key(p.provider)
 	var tasks: int = p.candidates
 	var plan := {
 		"dry_run": p.dry_run,
@@ -1379,6 +1380,10 @@ func _run(ctx, asset_id: String, fn: Callable) -> Dictionary:
 func _deliver(ctx, asset_id: String, fn: Callable) -> void:
 	if not asset_id.is_empty():
 		_locks[asset_id] = true
+	## The dispatcher registers the request only after the tool returns
+	## {"_deferred": true}; a reply sent before that (a path with no network
+	## wait, e.g. a missing key) would be dropped. Start on the next frame.
+	await (Engine.get_main_loop() as SceneTree).process_frame
 	var r: Variant = await fn.call()
 	_locks.erase(asset_id)
 	ctx.send_deferred(r if r is Dictionary else Util.error(Util.INTERNAL_ERROR, "no result"))
