@@ -278,7 +278,7 @@ func _plan(p: Dictionary) -> Variant:
 		var ext := src.get_extension().to_lower()
 		if not ext in ANIM_EXTENSIONS:
 			return Util.error(Util.INVALID_PARAMS, "model must be a rigged .fbx, .glb or .gltf")
-		if src.begins_with("res://"):
+		if src.begins_with("res://") and godot_imports(src):
 			if not FileAccess.file_exists(src):
 				return Util.error(Util.INVALID_PARAMS, "model %s not found" % src)
 			plan.model = {"source": src, "dest": src, "copy": false, "is_model": true}
@@ -318,7 +318,9 @@ func _plan(p: Dictionary) -> Variant:
 			continue
 		var dest := src
 		var copy := false
-		if not src.begins_with("res://"):
+		## Files Godot does not import (outside res://, or in a .gdignore
+		## folder such as asset_sources/) are copied in first.
+		if not godot_imports(src):
 			dest = p.anim_dir.path_join(_file_id(src) + "." + src.get_extension().to_lower())
 			copy = true
 			var conflict := _copy_conflict(src, dest, true)
@@ -332,6 +334,19 @@ func _plan(p: Dictionary) -> Variant:
 	if plan.anims.is_empty() and (existing == null or existing.get_animation_list().is_empty()):
 		return Util.error(Util.INVALID_PARAMS, "no animations yet: pass animations=[files or a folder] (Mixamo FBX, 'Without Skin', 'In Place'); later characters reuse %s" % p.library)
 	return plan
+
+
+## False for files Godot never imports: outside res://, or under a folder
+## with .gdignore (asset_sources/) or a hidden one. Those are copied in.
+static func godot_imports(path: String) -> bool:
+	if not path.begins_with("res://"):
+		return false
+	var dir := path.get_base_dir()
+	while dir.length() > "res://".length():
+		if dir.get_file().begins_with(".") or FileAccess.file_exists(dir.path_join(".gdignore")):
+			return false
+		dir = dir.get_base_dir()
+	return true
 
 
 ## A project file name from a download name: "Rifle Walk (1).fbx" -> rifle_walk_1.

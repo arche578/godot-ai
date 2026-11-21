@@ -4227,6 +4227,22 @@ func test_character_bone_map_guess() -> void:
 	assert_eq(CharacterTools._file_id("Rifle Walk (1).fbx"), "rifle_walk_1")
 
 
+func test_character_sources_in_gdignore_folder_are_copied() -> void:
+	## asset_sources/ has .gdignore: Godot never imports files there, so
+	## character_anim_setup must copy them in instead of waiting for an import.
+	var dir := "res://zz_mcp_test_ignored"
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(dir + "/mixamo"))
+	var f := FileAccess.open(dir + "/.gdignore", FileAccess.WRITE)
+	f.close()
+	assert_false(CharacterTools.godot_imports(dir + "/mixamo/Rifle Idle.fbx"), "file under a .gdignore folder")
+	assert_false(CharacterTools.godot_imports("/Users/me/Downloads/Rifle Idle.fbx"), "file outside res://")
+	assert_false(CharacterTools.godot_imports("res://.hidden/a.fbx"), "hidden folder")
+	assert_true(CharacterTools.godot_imports("res://assets/characters/a.fbx"), "normal project file")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(dir + "/.gdignore"))
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(dir + "/mixamo"))
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(dir))
+
+
 func test_character_params_rejected() -> void:
 	var chars := CharacterTools.new()
 	assert_is_error(chars.character_anim_setup({}), "INVALID_PARAMS")
