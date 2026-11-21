@@ -1475,6 +1475,10 @@ func _save_live_swap(params: Dictionary, data: Dictionary, scene: String) -> voi
 		return
 	var err := EditorInterface.save_scene()
 	data["edited"] = "open scene, saved" if err == OK else "open scene (save failed: %s; save with Ctrl+S)" % error_string(err)
+	## The swap switched tabs to edit this scene: go back to where the user was.
+	var previous := String(data.get("switched_from", ""))
+	if err == OK and not previous.is_empty() and previous in EditorInterface.get_open_scenes():
+		EditorInterface.open_scene_from_path(previous)
 
 
 ## The "before" render is taken ahead of the import: when the scene already

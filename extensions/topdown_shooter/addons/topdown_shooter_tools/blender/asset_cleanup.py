@@ -49,6 +49,12 @@ DEFAULTS = {
 }
 
 
+# Weapon direction from the top-down principal axis (see _guess_weapon_forward).
+PCA_SAMPLE = 60000
+PCA_MIN_ELONGATION = 1.5
+SNAP_DEGREES = 3.0
+
+
 def main():
     argv = sys.argv[sys.argv.index("--") + 1 :] if "--" in sys.argv else []
     if not argv:
@@ -121,13 +127,15 @@ def run(job, report):
     up_v = AXES.get(up)
     if up_v is None:
         raise CleanupError("'up' must be one of %s" % ", ".join(AXES))
+    fwd_v = None
     if forward == "auto":
         if kind == "weapon":
-            forward, how = _guess_weapon_forward(meshes, up_v)
+            forward, how, fwd_v = _guess_weapon_forward(meshes, up_v)
             report["forward_detected"] = how
         else:
             forward = "+z"
-    fwd_v = AXES.get(forward)
+    if fwd_v is None:
+        fwd_v = AXES.get(forward)
     if fwd_v is None:
         raise CleanupError("'forward' must be auto or one of %s" % ", ".join(AXES))
     if abs(fwd_v.dot(up_v)) > 0.5:
@@ -362,46 +370,91 @@ def _triangles(meshes):
 
 
 def _guess_weapon_forward(meshes, up_v):
-    """The long horizontal axis is the barrel; its thinner end is the front.
+    """The long horizontal direction is the barrel; its thinner end is the front.
 
-    Returns (axis, explanation). The thin end is the one whose last 12% of
-    length has the smaller cross section (the stock and grip are bulky)."""
+    The direction is the principal axis of the vertices seen from above, so a
+    model exported at an angle (not along X or Z) is still straightened; it
+    snaps to the nearest axis when within SNAP_DEGREES. The thin end is the
+    one whose last 12% of length has the smaller cross section (the stock and
+    grip are bulky). Returns (label, explanation, forward vector in Godot
+    axes)."""
     pts = [B2G @ p for p in _world_verts(meshes)]
+    if len(pts) > PCA_SAMPLE:
+        step = len(pts) / PCA_SAMPLE
+        pts = [pts[int(i * step)] for i in range(PCA_SAMPLE)]
     up_axis = max(range(3), key=lambda i: abs(up_v[i]))
-    horizontal = [i for i in range(3) if i != up_axis]
-    lo = [min(p[i] for p in pts) for i in range(3)]
-    hi = [max(p[i] for p in pts) for i in range(3)]
-    long_axis = max(horizontal, key=lambda i: hi[i] - lo[i])
-    length = hi[long_axis] - lo[long_axis]
-    others = [i for i in range(3) if i != long_axis]
-    band = length * 0.12
+    h0, h1 = [i for i in range(3) if i != up_axis]
+    n = float(len(pts))
+    ma = sum(p[h0] for p in pts) / n
+    mb = sum(p[h1] for p in pts) / n
+    caa = sum((p[h0] - ma) ** 2 for p in pts) / n
+    cbb = sum((p[h1] - mb) ** 2 for p in pts) / n
+    cab = sum((p[h0] - ma) * (p[h1] - mb) for p in pts) / n
+    theta = 0.5 * math.atan2(2.0 * cab, caa - cbb)
+    # Eigenvalues: how elongated the top-down silhouette is.
+    mid = (caa + cbb) / 2.0
+    rad = math.sqrt(max(0.0, ((caa - cbb) / 2.0) ** 2 + cab * cab))
+    l1, l2 = mid + rad, max(1e-12, mid - rad)
+    if l1 / l2 < PCA_MIN_ELONGATION:
+        # Nearly round from above: fall back to the longer bounding-box side.
+        lo = [min(p[i] for p in pts) for i in (h0, h1)]
+        hi = [max(p[i] for p in pts) for i in (h0, h1)]
+        theta = 0.0 if hi[0] - lo[0] >= hi[1] - lo[1] else math.pi / 2.0
+    # Snap to an axis when the tilt is small: keeps axis-aligned models exact.
+    nearest = round(theta / (math.pi / 2.0)) * (math.pi / 2.0)
+    tilt = math.degrees(theta - nearest)
+    if abs(tilt) <= SNAP_DEGREES:
+        theta = nearest
+        tilt = 0.0
+    u = (math.cos(theta), math.sin(theta))
+    w = (-u[1], u[0])
+
+    def coords(p):
+        a, b = p[h0] - ma, p[h1] - mb
+        return a * u[0] + b * u[1], a * w[0] + b * w[1], p[up_axis]
+
+    proj = [coords(p) for p in pts]
+    t_lo = min(c[0] for c in proj)
+    t_hi = max(c[0] for c in proj)
+    band = (t_hi - t_lo) * 0.12
 
     def section(at_low):
-        sel = [
-            p
-            for p in pts
-            if (
-                p[long_axis] <= lo[long_axis] + band
-                if at_low
-                else p[long_axis] >= hi[long_axis] - band
-            )
-        ]
+        sel = [c for c in proj if (c[0] <= t_lo + band if at_low else c[0] >= t_hi - band)]
         if not sel:
             return math.inf
-        area = 1.0
-        for i in others:
-            area *= max(1e-6, max(p[i] for p in sel) - min(p[i] for p in sel))
-        return area
+        side = max(1e-6, max(c[1] for c in sel) - min(c[1] for c in sel))
+        tall = max(1e-6, max(c[2] for c in sel) - min(c[2] for c in sel))
+        return side * tall
 
     low_area = section(True)
     high_area = section(False)
-    name = "xyz"[long_axis]
-    sign = "-" if low_area < high_area else "+"
-    return sign + name, "barrel along %s%s (end cross sections %.4g vs %.4g m2)" % (
-        sign,
-        name,
-        min(low_area, high_area),
-        max(low_area, high_area),
+    sign = -1.0 if low_area < high_area else 1.0
+    vec = [0.0, 0.0, 0.0]
+    vec[h0] = sign * u[0]
+    vec[h1] = sign * u[1]
+    fwd = Vector(vec).normalized()
+    names = "xyz"
+    if tilt == 0.0:
+        k = max(range(3), key=lambda i: abs(fwd[i]))
+        label = ("-" if fwd[k] < 0 else "+") + names[k]
+        where = "barrel along %s" % label
+    else:
+        label = "auto"
+        where = "barrel along (%.3f, %.3f, %.3f), %.1f degrees off the nearest axis" % (
+            fwd[0],
+            fwd[1],
+            fwd[2],
+            abs(tilt),
+        )
+    return (
+        label,
+        "%s (end cross sections %.4g vs %.4g m2)"
+        % (
+            where,
+            min(low_area, high_area),
+            max(low_area, high_area),
+        ),
+        fwd,
     )
 
 
