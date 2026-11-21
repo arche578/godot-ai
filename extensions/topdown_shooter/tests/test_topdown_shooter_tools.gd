@@ -3562,3 +3562,57 @@ func test_gen_pipeline_swap_defaults() -> void:
 	assert_is_error(gen.asset_pipeline({"asset_id": "x", "swap": "yes"}), "INVALID_PARAMS")
 	assert_is_error(gen.asset_pipeline({"asset_id": "x", "cleanup_options": {"source": "a"}}), "INVALID_PARAMS")
 	assert_is_error(gen.asset_job({"op": "status", "asset_id": "zz_never_made"}), "NODE_NOT_FOUND")
+
+
+func test_gen_adopt_external_model() -> void:
+	var pair := _gen()
+	var gen: GenTools = pair[0]
+	var fake: FakeTransport = pair[1]
+	var inbox_dir := WORK_DIR + "/inbox/tripo_export"
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(inbox_dir))
+	var src := inbox_dir + "/smg_tripo.glb"
+	var f := FileAccess.open(src, FileAccess.WRITE)
+	f.store_buffer(fake.glb)
+	f.close()
+	gen.settings_override["inbox_dirs"] = WORK_DIR + "/inbox, res://zz_mcp_test_no_such_dir"
+	var box := gen.asset_job({"op": "inbox"})
+	assert_has_key(box, "data", str(box))
+	assert_eq(box.data.count, 1, str(box))
+	assert_eq(box.data.models[0].path, src)
+	assert_eq(box.data.missing_dirs.size(), 1)
+	var id := ASSET_PREFIX + "adopted"
+	var base := {"asset_id": id, "kind": "weapon", "source": src, "provider": "tripo"}
+	## Generation-only params and unknown origins are refused.
+	assert_is_error(gen.asset_pipeline(_merged(base, {"candidates": 2})), "INVALID_PARAMS")
+	assert_is_error(gen.asset_pipeline(_merged(base, {"provider": "acme"})), "INVALID_PARAMS")
+	assert_is_error(gen.asset_pipeline(_merged(base, {"source": inbox_dir + "/missing.glb"})), "INVALID_PARAMS")
+	var dry := gen.asset_pipeline(_merged(base, {"dry_run": true}))
+	assert_has_key(dry, "data", str(dry))
+	assert_eq(dry.data.estimated_credits.total, 0)
+	assert_eq(dry.data.pipeline.swap, {"target": "weapon", "asset_id": id})
+	assert_false(FileAccess.file_exists(GenTools.job_path(id)), "dry_run writes no job")
+	var done := gen.asset_pipeline(_merged(base, {"cleanup": false, "swap": false, "dest_dir": ASSET_KNOWN_DIR, "preview": false}))
+	assert_has_key(done, "data", str(done))
+	assert_eq(done.data.stage, "done", str(done))
+	assert_eq(done.data.mode, "external")
+	assert_eq(done.data.import.triangles, 12)
+	assert_true(FileAccess.file_exists(GenTools.raw_model_path(id)), "the export is copied next to the job")
+	assert_true(FileAccess.file_exists(src), "the original export stays")
+	assert_eq(fake.requests.size(), 0, "no service calls")
+	assert_eq(gen.usage_today().tasks, 0, "no credits counted")
+	assert_is_error(gen.asset_job({"op": "pick", "asset_id": id, "index": 1}), "INVALID_PARAMS")
+	var again := gen.asset_job({"op": "inbox"})
+	assert_eq(again.data.models[0].get("used_by"), id)
+	## A .blend needs Blender cleanup.
+	var blend := inbox_dir + "/thing.blend"
+	var bf := FileAccess.open(blend, FileAccess.WRITE)
+	bf.store_string("x")
+	bf.close()
+	assert_is_error(gen.asset_pipeline({"asset_id": id + "_b", "kind": "prop", "source": blend, "cleanup": false}), "INVALID_PARAMS")
+	_remove_gen_test_files()
+
+
+func _merged(a: Dictionary, b: Dictionary) -> Dictionary:
+	var out := a.duplicate()
+	out.merge(b, true)
+	return out

@@ -43,8 +43,8 @@
 | `asset_import` | 모델을 규칙 폴더 `res://assets/<종류>s/<id>/<id>.glb`로 복사하고 임포트 설정(LOD, 탄젠트, 그림자 메시)을 써서 전체 scan 없이 임포트. 실제 크기(m)·원점·삼각형·머티리얼·텍스처 크기·뼈·애니메이션·Muzzle과 예산 초과·방향 경고를 보고하고, GUI 에디터면 미리보기 PNG. 실행 취소 한 번 |
 | `swap_placeholder` | 임시 도형을 모델로 교체. 임시 메시는 지우지 않고 숨기고, 모델은 옆의 `<이름>Skin` 노드에 넣어서 충돌·스크립트·노드 경로가 그대로. 플레이어·적(`Body`를 캡슐 키에 맞춤, 플레이어는 조준을 따라 돎), 무기(`Model` 교체, `Muzzle`을 모델 총구로), 레이드 맵(`Walls`·`Floors`는 길이 따라 타일, `Cover`·`Crates`는 상자에 맞춤), 아이템(바닥 아이템이 상자 대신 모델과 희귀도 빛). 다시 실행하면 교체, `revert=true`로 되돌림. 실행 취소 한 번 |
 | `asset_generate` | Meshy·Tripo로 3D 모델 생성 시작. 프롬프트 뒤에 종류별 문구와 공통 스타일 프리셋(`res://assets/style_preset.json`, 이끼 덮인 근미래 폐허)을 붙이고, 후보마다 작업 하나(기본 2개)를 만들고 바로 작업 번호를 돌려줌. 문장 생성은 텍스처 없는 후보만 만들고 고른 것만 텍스처를 입힘. 참고 이미지(URL·파일)도 됨. `dry_run`은 프롬프트·예상 크레딧만. 하루 작업 상한(기본 20) |
-| `asset_job` | 생성 작업 상태(후보 미리보기 PNG 저장), 탑뷰 렌더 미리보기, 후보 고르기, 다운로드, 취소, 목록, 서비스별 남은 크레딧 |
-| `asset_pipeline` | 한 번에 이어 돌리기: 생성 → 후보가 나오면 **멈춰서 고르기를 기다림** → 텍스처 → 다운로드 → `asset_cleanup` → `asset_import` → `swap_placeholder` → 교체 전후 렌더와 판정. 같은 `asset_id`로 다시 부르면 이어서 진행 |
+| `asset_job` | 생성 작업 상태(후보 미리보기 PNG 저장), 탑뷰 렌더 미리보기, 후보 고르기, 다운로드, 취소, 목록, 서비스별 남은 크레딧, 밖에서 만든 모델 대기 목록(inbox) |
+| `asset_pipeline` | 한 번에 이어 돌리기: 생성 → 후보가 나오면 **멈춰서 고르기를 기다림** → 텍스처 → 다운로드 → `asset_cleanup` → `asset_import` → `swap_placeholder` → 교체 전후 렌더와 판정. 같은 `asset_id`로 다시 부르면 이어서 진행. `source=`로 밖에서 만든 모델(Tripo Studio, meshy CLI)을 넣으면 정리 단계부터 |
 
 Claude에게는 이렇게 말하면 됩니다.
 
@@ -476,7 +476,7 @@ extensions/topdown_shooter/script/link-test-project --remove
 ## AI 모델 생성
 
 `asset_generate`·`asset_job`·`asset_pipeline`은 Meshy나 Tripo의 API로 모델을 만들어 위의
-파이프라인에 넣습니다. 사람이 할 일은 후보 고르기 하나입니다.
+파이프라인에 넣습니다. 밖에서 만든 모델도 `source=`로 넣을 수 있습니다(아래). 사람이 할 일은 후보 고르기 하나입니다.
 
 ### API 키 넣기 (처음 한 번)
 
@@ -503,6 +503,24 @@ extensions/topdown_shooter/script/link-test-project --remove
 4. `asset_pipeline asset_id=medkit pick=2`: 고른 후보에 텍스처를 입히고(문장 생성일 때),
    다음 호출들에서 다운로드 → Blender 정리 → 가져오기 → 교체 → 교체 전후 렌더까지 진행합니다.
    호출마다 다음에 할 일을 `next`로 알려 줍니다.
+
+### 밖에서 만든 모델 넣기 (Tripo Studio, meshy CLI)
+
+API 크레딧 없이 웹 크레딧이나 CLI로 만든 모델도 같은 파이프라인으로 넣을 수 있습니다.
+크레딧은 여기서 세지 않습니다.
+
+- **Tripo Studio:** 게임 프로젝트에 공식 Tripo Godot Bridge 애드온을 켜 두고, Studio에서
+  모델을 연 뒤 DCC Bridge 버튼으로 내보내면 `res://TripoModels`에 들어옵니다. 프롬프트는
+  `asset_generate provider=tripo dry_run=true`가 프리셋을 붙여 만들어 주므로 복사해 씁니다.
+  웹사이트를 브라우저 자동화로 조작하는 건 Tripo 약관이 금지하므로 생성은 직접 합니다.
+- **meshy CLI:** `meshy` CLI(브라우저 로그인)로 만든 GLB 경로를 그대로 넘기거나, 출력 폴더를
+  편집기 설정 `Inbox Dirs`(쉼표로 구분, 기본 `res://TripoModels`)에 추가합니다.
+
+1. `asset_job op=inbox`: 기다리는 모델 파일을 최신순으로 보여 줍니다. 이미 쓴 파일에는 `used_by`.
+2. `asset_pipeline asset_id=smg kind=weapon source=res://TripoModels/.../smg.glb provider=tripo`:
+   GLB를 `asset_sources/smg/smg_raw.glb`로 복사해 작업 기록을 만들고, 한 번의 호출로 Blender
+   정리 → 가져오기 → 교체 → 교체 전후 렌더까지 진행합니다. `dry_run=true`면 단계만 보여 줍니다.
+   원본 파일은 그대로 둡니다. `.gltf`·`.obj`·`.fbx`는 옆 파일이 있어 제자리에서 씁니다.
 
 | 항목 | 내용 |
 |---|---|
