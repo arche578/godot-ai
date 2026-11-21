@@ -28,8 +28,13 @@ const SwapTools := preload("res://addons/topdown_shooter_tools/handlers/swap_too
 const ItemTools := preload("res://addons/topdown_shooter_tools/handlers/item_tools.gd")
 
 const TARGETS := ["player", "enemy"]
-const ROLES := ["idle", "walk", "run", "walk_back", "strafe_left", "strafe_right", "aim", "fire", "reload", "dodge", "hit", "death", "attack"]
-const LOOP_ROLES := ["idle", "walk", "run", "walk_back", "strafe_left", "strafe_right", "aim"]
+const ROLES := ["idle", "walk", "run", "walk_back", "strafe_left", "strafe_right", "aim", "fire", "reload", "dodge", "hit", "death", "attack",
+	"unarmed_idle", "unarmed_walk", "unarmed_run"]
+const LOOP_ROLES := ["idle", "walk", "run", "walk_back", "strafe_left", "strafe_right", "aim", "unarmed_idle", "unarmed_walk", "unarmed_run"]
+## Played instead of idle/walk/run while the character has no weapon.
+const UNARMED_ROLES := ["unarmed_idle", "unarmed_walk", "unarmed_run"]
+## Name words that mark an idle/walk/run download as the no-weapon set.
+const UNARMED_WORDS := ["unarmed", "no weapon", "noweapon", "empty hand", "empty handed"]
 ## One-shot clips, in tree order (later ones play over earlier ones).
 const ONE_SHOT_ROLES := ["hit", "fire", "reload", "attack", "dodge"]
 const UPPER_BODY_ROLES := ["hit", "fire", "reload"]
@@ -376,6 +381,10 @@ static func guess_role(name: String) -> String:
 	for entry in ROLE_WORDS:
 		for w in entry[1]:
 			if words.contains(" " + w + " "):
+				if entry[0] in ["idle", "walk", "run"]:
+					for u in UNARMED_WORDS:
+						if words.contains(" " + u + " "):
+							return "unarmed_" + entry[0]
 				return entry[0]
 	return ""
 
@@ -1077,12 +1086,15 @@ func _make_nodes(root: Node, p: Dictionary, built: Dictionary, script: Script) -
 	if root.get_node_or_null(mount_path) == null and p.weapon_follow != "none":
 		warnings.append("no weapon mount at %s; weapon_follow does nothing" % mount_path)
 	var params: Array = ["locomotion/blend_position"]
+	if UNARMED_ROLES.any(func(r): return r in roles):
+		params.append_array(["stance/blend_amount", "unarmed_locomotion/blend_position"])
 	for role in ONE_SHOT_ROLES:
 		if role in roles:
 			params.append(role + "/request")
 	return {"tree": tree, "animator": animator, "root_changes": root_changes, "report": {
 		"animation_tree": {"node": TREE_NAME, "root_node": String(tree.root_node), "locomotion": "BlendSpace2D (strafes)" if directional else ("BlendSpace1D (speed)" if "walk" in roles or "run" in roles else "idle only"),
-			"aim": "aim" in roles, "one_shots": ONE_SHOT_ROLES.filter(func(r): return r in roles), "death": "death" in roles, "parameters": params},
+			"aim": "aim" in roles, "one_shots": ONE_SHOT_ROLES.filter(func(r): return r in roles), "death": "death" in roles,
+			"unarmed": UNARMED_ROLES.filter(func(r): return r in roles), "parameters": params},
 		"animator": {"node": ANIMATOR_NAME, "weapon_follow": p.weapon_follow, "hand_bone": String(props.hand_bone), "weapon_mount": String(mount_path)},
 		"changed": root_changes.map(func(c): return "%s = %s" % [c[0], str(c[1])]),
 		"warnings": warnings,
@@ -1090,7 +1102,7 @@ func _make_nodes(root: Node, p: Dictionary, built: Dictionary, script: Script) -
 
 
 ## The blend tree for the roles the library has:
-## locomotion -> loco_speed -> aim -> hit -> fire -> reload -> attack -> dodge -> life -> output
+## locomotion [-> stance (+ unarmed_locomotion)] -> loco_speed -> aim -> hit -> fire -> reload -> attack -> dodge -> life -> output
 static func build_tree(roles: Array, walk_speed: float, run_speed: float, directional: bool, upper_body: bool) -> AnimationNodeBlendTree:
 	var bt := AnimationNodeBlendTree.new()
 	var x := 0.0
@@ -1117,10 +1129,31 @@ static func build_tree(roles: Array, walk_speed: float, run_speed: float, direct
 	else:
 		locomotion = _clip_node("idle")
 	bt.add_node(&"locomotion", locomotion, Vector2(x, 0))
+	var last := &"locomotion"
+	## No weapon: a second, speed-only set, cross-faded by stance (1 = unarmed).
+	var unarmed := UNARMED_ROLES.filter(func(r): return r in roles)
+	if not unarmed.is_empty():
+		var free_hands: AnimationRootNode
+		if unarmed.size() == 1:
+			free_hands = _clip_node(unarmed[0])
+		else:
+			var ubs := AnimationNodeBlendSpace1D.new()
+			ubs.min_space = 0.0
+			ubs.max_space = (run_speed if "unarmed_run" in roles else walk_speed) * 1.25
+			for spec in [["unarmed_idle", 0.0], ["unarmed_walk", walk_speed], ["unarmed_run", run_speed]]:
+				if spec[0] in roles:
+					ubs.add_blend_point(_clip_node(spec[0]), spec[1], -1, StringName(spec[0]))
+			free_hands = ubs
+		x += 220.0
+		bt.add_node(&"unarmed_locomotion", free_hands, Vector2(x - 110.0, 200))
+		bt.add_node(&"stance", AnimationNodeBlend2.new(), Vector2(x, 0))
+		bt.connect_node(&"stance", 0, last)
+		bt.connect_node(&"stance", 1, &"unarmed_locomotion")
+		last = &"stance"
 	x += 220.0
 	bt.add_node(&"loco_speed", AnimationNodeTimeScale.new(), Vector2(x, 0))
-	bt.connect_node(&"loco_speed", 0, &"locomotion")
-	var last := &"loco_speed"
+	bt.connect_node(&"loco_speed", 0, last)
+	last = &"loco_speed"
 	var upper := _upper_body_paths()
 	if "aim" in roles:
 		x += 220.0

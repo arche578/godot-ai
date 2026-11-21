@@ -4324,7 +4324,8 @@ func test_character_bone_map_guess() -> void:
 	## Roles from download names.
 	for case in [["Rifle Idle", "idle"], ["Walking", "walk"], ["Rifle Run", "run"], ["Sprinting Forward Roll", "dodge"], ["Firing Rifle", "fire"],
 			["Reloading", "reload"], ["Hit Reaction", "hit"], ["Dying", "death"], ["Walking Backwards", "walk_back"], ["Left Strafe Walking", "strafe_left"],
-			["Rifle Aiming Idle", "aim"], ["Zombie Punching", "attack"], ["RifleWalk", "walk"], ["mixamo.com", ""]]:
+			["Rifle Aiming Idle", "aim"], ["Zombie Punching", "attack"], ["RifleWalk", "walk"], ["mixamo.com", ""],
+			["Unarmed Idle", "unarmed_idle"], ["Unarmed Walking", "unarmed_walk"], ["UnarmedRun", "unarmed_run"], ["Unarmed Punching", "attack"]]:
 		assert_eq(CharacterTools.guess_role(case[0]), case[1], case[0])
 	assert_eq(CharacterTools._file_id("Rifle Walk (1).fbx"), "rifle_walk_1")
 
@@ -4374,6 +4375,14 @@ func test_character_tree_build() -> void:
 	assert_eq((dir.get_node("locomotion") as AnimationNodeBlendSpace2D).get_blend_point_count(), 5)
 	var idle_only := CharacterTools.build_tree(["idle"], 1.6, 4.0, false, true)
 	assert_true(idle_only.get_node("locomotion") is AnimationNodeAnimation)
+	assert_false(idle_only.has_node("stance"), "no stance without unarmed clips")
+	var free := CharacterTools.build_tree(["idle", "walk", "run", "aim", "unarmed_idle", "unarmed_walk", "unarmed_run"], 1.6, 4.0, false, true)
+	assert_true(free.has_node("stance") and free.get_node("stance") is AnimationNodeBlend2, "stance cross-fade")
+	var ul := free.get_node("unarmed_locomotion") as AnimationNodeBlendSpace1D
+	assert_true(ul != null and ul.get_blend_point_count() == 3, "unarmed idle/walk/run on speed")
+	assert_true(absf(ul.get_blend_point_position(1) - 1.6) < 0.001, "walk at walk_speed")
+	var one := CharacterTools.build_tree(["idle", "walk", "unarmed_idle"], 1.6, 4.0, false, true)
+	assert_true(one.get_node("unarmed_locomotion") is AnimationNodeAnimation, "one unarmed clip plays alone")
 
 
 ## A Mixamo-style skinned rig (capsule bound to Hips) with one clip, exported
@@ -4592,6 +4601,19 @@ func test_character_animator_drives_tree() -> void:
 	var hand_skel := inst.get_node("%GeneralSkeleton") as Skeleton3D
 	var hand: Transform3D = hand_skel.global_transform * hand_skel.get_bone_global_pose(hand_skel.find_bone("RightHand"))
 	assert_true(mount.global_position.distance_to(hand.origin) < 0.001, "weapon mount in the hand: %s vs %s" % [mount.global_position, hand.origin])
+	## No weapon (no get_weapon on this stand-in) and not an AI body: unarmed.
+	assert_true(animator.is_unarmed(), "no weapon -> unarmed")
+	animator.set("stance", "armed")
+	assert_false(animator.is_unarmed(), "stance=armed forces the armed set")
+	animator.set("stance", "auto")
+	animator.set("grip_offset", Vector3(0, 0, 0.1))
+	animator.set("grip_in_hand_space", true)
+	animator._process(0.0)
+	hand = hand_skel.global_transform * hand_skel.get_bone_global_pose(hand_skel.find_bone("RightHand"))
+	var want: Vector3 = hand.origin + hand.basis.orthonormalized() * Vector3(0, 0, 0.1)
+	assert_true(mount.global_position.distance_to(want) < 0.001, "grip offset in the hand's space: %s vs %s" % [mount.global_position, want])
+	animator.set("grip_in_hand_space", false)
+	animator.set("grip_offset", Vector3.ZERO)
 	body.emit_signal("health_changed", 100.0, 100.0)
 	body.emit_signal("health_changed", 80.0, 100.0)
 	assert_eq(int(tree.get("parameters/hit/request")), AnimationNodeOneShot.ONE_SHOT_REQUEST_FIRE, "damage plays the hit clip")
