@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "name": "mossy_near_future_ruins",
+  "about": "Shared art direction for asset_generate / asset_pipeline. Every prompt gets the kind's line and the style line appended. Edit freely: this copy belongs to the project. Original designs only: never recreate characters, maps or distinctive designs from existing games.",
+  "style": "semi-realistic stylized game asset, near-future ruined city reclaimed by moss and vines, weathered concrete, worn rubber and rusted metal, muted desaturated grey-green palette, soft overcast daylight, painterly hand-finished textures",
+  "texture_style": "weathered, moss patches and grime in crevices, chipped paint, muted grey-green palette, painterly semi-realistic PBR",
+  "negative": "text, letters, logo, watermark, brand name, trademark, signature, ground plane, pedestal, base, background scene, multiple objects, cartoon, chibi, low quality, blurry",
+  "blocked_terms": ["logo", "trademark", "brand name"],
+  "kinds": {
+    "weapon": {
+      "prompt": "single original firearm design, isolated object, side view silhouette that reads clearly from above",
+      "target_polycount": 5000
+    },
+    "item": {
+      "prompt": "single small loot object, isolated, centered, readable silhouette",
+      "target_polycount": 2000
+    },
+    "prop": {
+      "prompt": "modular environment prop for a top-down game, isolated, flat bottom, sits on the ground",
+      "target_polycount": 5000
+    },
+    "character": {
+      "prompt": "original character design, full body, A-pose, arms away from the body, neutral expression, isolated",
+      "target_polycount": 15000
+    }
+  },
+  "provider_options": {
+    "meshy": {},
+    "tripo": {}
+  }
+}
