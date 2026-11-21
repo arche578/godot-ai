@@ -248,6 +248,13 @@ jobs:
         shell: bash
         run: bash script/verify-worktree
 
+      # Fork-only: link the top-down shooter addon and its suite into
+      # test_project/ before the import/editor steps, so GDScript validation
+      # parses the addon and ci-godot-tests counts and runs its suite.
+      - name: Link top-down shooter extension
+        shell: bash
+        run: bash extensions/topdown_shooter/script/link-test-project
+
       - uses: chickensoft-games/setup-godot@ac93246ea68518a384c1c280a496e5989341f2f6 # v2.4.3
         with:
           version: ${{ matrix.godot-version }}
